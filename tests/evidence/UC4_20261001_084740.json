@@ -1,0 +1,86 @@
+{
+  "uc_id": "UC4",
+  "name": "定点返回",
+  "covers": "连发指令的时序可靠性与去抖",
+  "started_at": 1790815660.7208304,
+  "ended_at": 1790815660.7208304,
+  "duration_s": 0.0,
+  "passed": true,
+  "checks": [
+    {
+      "name": "连发 5 次 BACK 全部成功",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "单次指令往返 <50ms",
+      "ok": true,
+      "detail": "worst=0.003ms"
+    },
+    {
+      "name": "步骤数 == 5（无合并/丢失）",
+      "ok": true,
+      "detail": "steps=5"
+    },
+    {
+      "name": "整轮耗时记录",
+      "ok": true,
+      "detail": "total=0.024ms"
+    }
+  ],
+  "checks_passed": 4,
+  "checks_total": 4,
+  "note": "",
+  "steps": [
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    },
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    },
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    },
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    },
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    }
+  ]
+}

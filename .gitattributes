@@ -1,0 +1,28 @@
+# ---- 换行策略 ----
+# 仓库内文本统一 LF。未在此列出的类型保持 git 默认行为，
+# 以免历史证据文件（tests/evidence/*.json、docs/evidence/*）被大规模重写。
+
+# shell 脚本：必须 LF。
+# 此前 run_c_tests.sh / precheck-seams.sh 被存成 CRLF，
+# 在 Linux / CI 上执行会报 "$'\r': command not found"。
+*.sh    text eol=lf
+
+# PowerShell：Windows 原生，保持 CRLF
+*.ps1   text eol=crlf
+
+# 源码 / 文档 / 配置
+*.c     text eol=lf
+*.h     text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.html  text eol=lf
+
+# 二进制：禁止任何换行转换
+*.bin   binary
+*.elf   binary
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.pdf   binary

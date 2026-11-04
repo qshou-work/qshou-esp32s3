@@ -1,0 +1,75 @@
+{
+  "uc_id": "UC3",
+  "name": "列表滚动",
+  "covers": "swipe 插帧策略与安卓滚动方向约定",
+  "started_at": 1790688728.1614184,
+  "ended_at": 1790688728.1614583,
+  "duration_s": 4e-05,
+  "passed": true,
+  "checks": [
+    {
+      "name": "device 接受 swipe",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "上滑方向：起点 y > 终点 y",
+      "ok": true,
+      "detail": "y0=2000 y1=600"
+    },
+    {
+      "name": "起点 report 合法",
+      "ok": true,
+      "detail": "hid_y0=5000"
+    },
+    {
+      "name": "终点 report 合法",
+      "ok": true,
+      "detail": "hid_y1=5000"
+    },
+    {
+      "name": "起点≠终点（有位移）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "report 长度均为 5",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "checks_passed": 6,
+  "checks_total": 6,
+  "note": "",
+  "steps": [
+    {
+      "label": "swipe",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/swipe",
+        "echo": {
+          "x0": 540,
+          "y0": 2000,
+          "x1": 540,
+          "y1": 600,
+          "hid_report_start": [
+            3,
+            19,
+            136,
+            32,
+            141
+          ],
+          "hid_report_end": [
+            3,
+            19,
+            136,
+            9,
+            196
+          ]
+        }
+      },
+      "report_start": "031388208d",
+      "report_end": "03138809c4"
+    }
+  ]
+}

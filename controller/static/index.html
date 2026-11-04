@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Qshou · 终端控制台</title>
+<style>
+  body{font-family:system-ui,"Segoe UI",Arial;margin:0;background:#11151a;color:#e6e6e6}
+  #wrap{display:flex;gap:16px;padding:16px;align-items:flex-start}
+  #stage{position:relative;width:360px;height:800px;background:#000;border:1px solid #333}
+  #screen{width:100%;height:100%;object-fit:contain;display:block;cursor:crosshair}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  #panel{width:330px;font-size:13px}
+  .card{border:1px solid #2a3138;border-radius:8px;padding:10px;margin-bottom:10px}
+  .card h3{margin:0 0 8px;font-size:13px;font-weight:600;color:#9fb3c8}
+  .row{margin:6px 0}
+  button{padding:6px 10px;margin:2px;cursor:pointer;background:#1b2129;color:#e6e6e6;
+         border:1px solid #39424d;border-radius:6px;font-size:13px}
+  button:active{background:#2b3542}
+  button.pri{background:#1d4ed8;border-color:#3b82f6}
+  button.warn{background:#7f1d1d;border-color:#dc2626}
+  #echo{background:#0b0e12;padding:8px;border-radius:6px;white-space:pre-wrap;
+        min-height:40px;max-height:150px;overflow:auto;font-size:12px;
+        font-family:ui-monospace,Consolas,monospace}
+  #dpad{display:grid;grid-template-columns:repeat(3,44px);grid-gap:4px;justify-content:center}
+  #dpad button{width:44px;height:44px;margin:0;padding:0;font-size:15px}
+  #stickWrap{display:flex;gap:12px;align-items:center}
+  #stick{width:130px;height:130px;border-radius:50%;background:#161c23;
+         border:1px solid #39424d;position:relative;touch-action:none;cursor:grab}
+  #knob{position:absolute;width:44px;height:44px;border-radius:50%;background:#2b3542;
+        border:1px solid #5a6b7d;left:43px;top:43px;pointer-events:none}
+  #mini{background:#0b0e12;border:1px solid #2a3138;border-radius:4px}
+  .seg{display:inline-flex;border:1px solid #39424d;border-radius:6px;overflow:hidden}
+  .seg button{border:0;border-radius:0;margin:0;background:#161c23}
+  .seg button.on{background:#1d4ed8}
+  .dim{color:#7d8b99}
+  .kv{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  /* 画面调节面板（预览端，纯 CSS 滤镜/变换，不影响实际推流数据） */
+  .adj-btns{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0}
+  .adj-btns button{padding:6px 0;margin:0;font-size:13px}
+  .adj-btns button.on{background:#1d4ed8}
+  .adj-ctl{display:flex;align-items:center;gap:8px;margin:6px 0}
+  .adj-ctl label{font-size:13px;min-width:52px;color:#9fb3c8}
+  .adj-ctl input[type=range]{flex:1}
+  .adj-ctl .v{font-size:12px;min-width:30px;text-align:right;color:#e6e6e6}
+  .adj-checks{display:flex;gap:16px;margin:6px 0}
+  .adj-checks label{font-size:13px;color:#e6e6e6}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <img id="screen" src="{{STREAM_URL}}" alt="screen">
+    <canvas id="overlay" class="cam-adjust-sync" width="360" height="800"></canvas>
+  </div>
+
+  <div id="panel">
+    <div class="card">
+      <h3>相对推进（主交互 · 不依赖标定）</h3>
+      <div class="row">
+        速度档位：
+        <span class="seg" id="speedSeg"></span>
+      </div>
+      <div class="row">
+        模式：
+        <span class="seg" id="modeSeg">
+          <button data-mode="move" class="on">移动</button>
+          <button data-mode="drag">拖拽</button>
+        </span>
+        <span class="dim" id="modeHint">按住摇杆连续移动</span>
+      </div>
+      <div class="row" id="stickWrap">
+        <div id="stick"><div id="knob"></div></div>
+        <div>
+          <canvas id="mini" width="{{MINI_W}}" height="{{MINI_H}}"></canvas>
+          <div class="kv" id="cursorTxt">信念 (-,-)</div>
+        </div>
+      </div>
+      <div class="row">
+        方向键（单击 = 一步）：
+        <div id="dpad">
+          <button data-dir="-1,-1">↖</button><button data-dir="0,-1">↑</button><button data-dir="1,-1">↗</button>
+          <button data-dir="-1,0">←</button><button id="dpadClick" class="pri">点</button><button data-dir="1,0">→</button>
+          <button data-dir="-1,1">↙</button><button data-dir="0,1">↓</button><button data-dir="1,1">↘</button>
+        </div>
+      </div>
+      <div class="row">
+        <button class="warn" id="anchorBtn">归零（撞角对齐左上）</button>
+        <span class="dim" id="busyTxt"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>系统键</h3>
+      <div class="row">
+        <button data-key="HOME">HOME</button>
+        <button data-key="BACK">BACK</button>
+        <button data-key="RECENTS">RECENTS</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>增强：点画面（开环，未标定前不准）</h3>
+      <div class="row dim">SCR: <span id="scr">-</span> | HID: <span id="hid">-</span></div>
+      <div class="row dim">report: <span id="report">-</span></div>
+      <div class="row"><label><input type="checkbox" id="showGrid"> 显示标定网格</label></div>
+      <div class="row"><button id="calBtn">提交标定(9点)</button></div>
+    </div>
+
+    <div class="card">
+      <h3>状态</h3>
+      <div class="row kv" id="atomState">-</div>
+      <div class="row kv" id="health">-</div>
+      <div id="echo">等待操作…</div>
+    </div>
+
+    <div class="card">
+      <h3>设备信息（存储 · 内存 · 任务栈）</h3>
+      <div class="row kv" id="siNvs">-</div>
+      <div class="row kv" id="siHeap">-</div>
+      <div class="row kv" id="siPsram">-</div>
+      <div class="row kv" id="siParts">-</div>
+      <div class="row kv" id="siTasks">-</div>
+      <div class="row dim">刻意<b>不提供 CPU 负载百分比</b>：ESP-IDF v6.1 已移除 <code>esp_system_get_cpu_usage()</code>，需改 <code>sdkconfig</code> 开启 <code>GENERATE_RUN_TIME_STATS</code>，代价是全量重编译 ~44 分钟。免重编的替代指标是<b>任务栈余量</b>——可直接预警栈溢出，对排查 HID 抖动更实用。<code>storage</code>(1MB) 分区从未被挂载，故只显示分区几何信息，不谎报文件系统占用。<b>口径提醒</b>：这里的「内部堆」只统计<b>内部 RAM</b>（WiFi/BLE/DMA 缓冲的来源，真正的稀缺资源）；<code>/api/v1/health</code> 的 <code>free_heap</code> 是 <code>esp_get_free_heap_size()</code> 口径、<b>含 PSRAM</b>，数值大一个量级（= 内部堆 + PSRAM 可用）。<b>两者不是同一个数字，不要直接对比。</b></div>
+    </div>
+
+    <div class="card">
+      <h3>画面调节</h3>
+      <div class="row dim" style="margin-bottom:8px">旋转/镜像/翻转为本地预览（不改推流）；曝光/对比度/饱和度在新固件下真实改相机，旧固件/离线时回退为本地滤镜近似。设置自动保存在浏览器。</div>
+      <div class="adj-btns" id="adjRot">
+        <button data-rot="0" class="on">0°</button>
+        <button data-rot="90">90°</button>
+        <button data-rot="180">180°</button>
+        <button data-rot="270">270°</button>
+      </div>
+      <div class="adj-checks">
+        <label><input type="checkbox" id="adjMirror"> 水平镜像</label>
+        <label><input type="checkbox" id="adjFlip"> 垂直翻转</label>
+      </div>
+      <div class="adj-ctl"><label>曝光</label><input type="range" id="adjExp" min="-100" max="100" value="0"><span class="v" id="adjExpV">0</span></div>
+      <div class="adj-ctl"><label>对比度</label><input type="range" id="adjCon" min="-100" max="100" value="0"><span class="v" id="adjConV">0</span></div>
+      <div class="adj-ctl"><label>饱和度</label><input type="range" id="adjSat" min="-100" max="100" value="0"><span class="v" id="adjSatV">0</span></div>
+      <div class="row"><button id="adjReset">重置</button></div>
+    </div>
+  </div>
+</div>
+<script>
+const SCR_W={{SCR_W}}, SCR_H={{SCR_H}};
+const SPEEDS={{SPEEDS}}, DEFAULT_SPEED={{DEFAULT_SPEED}};
+const HID_MAX=10000;
+const DEADZONE=0.22;            // 摇杆死区（占半径比例）
+const STICK_TICK_MS=70;         // 客户端 tick 周期；飞行中跳过 = 客户端侧背压
+const DPAD_REPEAT_DELAY=400, DPAD_REPEAT_MS=90;
+
+const screen=document.getElementById('screen');
+const overlay=document.getElementById('overlay');
+const ctx=overlay.getContext('2d');
+const echo=document.getElementById('echo');
+let speed=DEFAULT_SPEED, mode='move';
+
+function log(s){echo.textContent=String(s);}
+
+/* ---------- 通用 POST ---------- */
+async function post(path,body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body||{})});
+  const t=await r.text();
+  try{return JSON.parse(t);}catch(e){return {ok:false,http:r.status,raw:t.slice(0,200)};}
+}
+
+/* ---------- 速度档位 ---------- */
+const speedSeg=document.getElementById('speedSeg');
+Object.keys(SPEEDS).forEach(k=>{
+  const b=document.createElement('button');
+  b.dataset.speed=k;
+  b.textContent=k+(SPEEDS[k].measured?'':'?');
+  if(k===speed)b.classList.add('on');
+  b.title=(SPEEDS[k].note||'')+'（step_ms='+SPEEDS[k].step_ms+'，tick='+SPEEDS[k].tick+'）';
+  b.onclick=()=>{speed=k;[...speedSeg.children].forEach(x=>x.classList.toggle('on',x.dataset.speed===k));};
+  speedSeg.appendChild(b);
+});
+document.getElementById('modeSeg').onclick=e=>{
+  const b=e.target.closest('button[data-mode]'); if(!b)return;
+  mode=b.dataset.mode;
+  [...b.parentNode.children].forEach(x=>x.classList.toggle('on',x===b));
+  document.getElementById('modeHint').textContent =
+    mode==='move' ? '按住摇杆连续移动' : '按住摇杆累加，松手一次性拖拽';
+};
+
+/* ---------- 摇杆 ---------- */
+const stick=document.getElementById('stick'), knob=document.getElementById('knob');
+let holding=false, vx=0, vy=0, inFlight=false, accX=0, accY=0, timer=null;
+const R=65-22;   // 可移动半径
+
+function setKnob(x,y){knob.style.left=(43+x)+'px';knob.style.top=(43+y)+'px';}
+function stickPos(ev){
+  const r=stick.getBoundingClientRect();
+  let x=ev.clientX-(r.left+r.width/2), y=ev.clientY-(r.top+r.height/2);
+  const m=Math.hypot(x,y);
+  if(m>R){x=x/m*R;y=y/m*R;}
+  return [x,y];
+}
+function tickSize(){return (SPEEDS[speed]||SPEEDS[DEFAULT_SPEED]).tick;}
+function vec(){
+  const m=Math.hypot(vx,vy);
+  if(m< R*DEADZONE) return null;
+  const t=tickSize();
+  return {dx:Math.round(vx/m*t), dy:Math.round(vy/m*t)};
+}
+async function stickTick(){
+  if(!holding)return;
+  const v=vec();
+  if(!v)return;
+  if(mode==='drag'){accX+=v.dx;accY+=v.dy;
+    log('拖拽累加 ('+accX+','+accY+')  松手提交');return;}
+  if(inFlight)return;                 // 客户端侧背压：飞行中跳过本 tick
+  inFlight=true;
+  try{
+    const d=await post('/api/v1/atom/move',{dx:v.dx,dy:v.dy,speed:speed});
+    log('move '+(d.queued?'queued':'coalesced')+' dx='+d.dx+' dy='+d.dy
+        +' step_ms='+d.step_ms);
+  }finally{inFlight=false;}
+}
+stick.addEventListener('pointerdown',e=>{
+  stick.setPointerCapture(e.pointerId);
+  holding=true;accX=0;accY=0;
+  const [x,y]=stickPos(e);vx=x;vy=y;setKnob(x,y);
+  if(!timer)timer=setInterval(stickTick,STICK_TICK_MS);
+});
+stick.addEventListener('pointermove',e=>{
+  if(!holding)return;
+  const [x,y]=stickPos(e);vx=x;vy=y;setKnob(x,y);
+});
+async function stickUp(){
+  if(!holding)return;
+  holding=false;
+  if(timer){clearInterval(timer);timer=null;}
+  setKnob(0,0);vx=vy=0;
+  if(mode==='drag'&&(accX||accY)){
+    const ax=Math.max(-25400,Math.min(25400,accX)), ay=Math.max(-25400,Math.min(25400,accY));
+    const d=await post('/api/v1/atom/drag',{dx:ax,dy:ay,speed:speed});
+    log('drag ('+ax+','+ay+') → 实交 ('+d.delivered_dx+','+d.delivered_dy+')'
+        +(d.shortfall?'  ⚠ 预算不足':''));
+  }
+  accX=accY=0;
+}
+stick.addEventListener('pointerup',stickUp);
+stick.addEventListener('pointercancel',stickUp);
+
+/* ---------- 方向键 ---------- */
+let dpadTimer=null, dpadDelay=null;
+function dpadStep(dx,dy){
+  const t=tickSize();
+  post('/api/v1/atom/move',{dx:dx*t,dy:dy*t,speed:speed})
+    .then(d=>log('dpad ('+(dx*t)+','+(dy*t)+') → '+(d.queued?'queued':'coalesced')));
+}
+document.getElementById('dpad').addEventListener('pointerdown',e=>{
+  const b=e.target.closest('button[data-dir]'); if(!b)return;
+  const [sx,sy]=b.dataset.dir.split(',').map(Number);
+  dpadStep(sx,sy);
+  dpadDelay=setTimeout(()=>{ dpadTimer=setInterval(()=>dpadStep(sx,sy),DPAD_REPEAT_MS); },DPAD_REPEAT_DELAY);
+});
+function dpadStop(){ if(dpadDelay){clearTimeout(dpadDelay);dpadDelay=null;}
+  if(dpadTimer){clearInterval(dpadTimer);dpadTimer=null;} }
+document.addEventListener('pointerup',dpadStop);
+document.getElementById('dpadClick').onclick=async()=>{log('click → '+JSON.stringify(await post('/api/v1/atom/click')));};
+
+/* ---------- 归零 ---------- */
+document.getElementById('anchorBtn').onclick=async()=>{
+  log('归零中…（约 3s，请勿重复点击）');
+  const d=await post('/api/v1/atom/anchor');
+  log('anchor → cursor=('+d.cursor.x+','+d.cursor.y+')  '
+      +JSON.stringify(d.device||{}));
+  pollState();
+};
+
+/* ---------- 信念示意 ---------- */
+const mini=document.getElementById('mini'), mctx=mini.getContext('2d');
+function drawMini(cur){
+  const W=mini.width,H=mini.height;
+  mctx.clearRect(0,0,W,H);
+  mctx.strokeStyle='#39424d';mctx.lineWidth=1;mctx.strokeRect(0.5,0.5,W-1,H-1);
+  mctx.strokeStyle='#22303c';mctx.beginPath();
+  mctx.moveTo(W/2,0);mctx.lineTo(W/2,H);mctx.moveTo(0,H/2);mctx.lineTo(W,H/2);mctx.stroke();
+  const x=cur.x/HID_MAX*(W-8)+4, y=cur.y/HID_MAX*(H-8)+4;
+  mctx.fillStyle='#3b82f6';mctx.beginPath();mctx.arc(x,y,4,0,7);mctx.fill();
+}
+async function pollState(){
+  try{
+    const s=await (await fetch('/api/v1/atom/state')).json();
+    drawMini(s.cursor);
+    document.getElementById('cursorTxt').textContent =
+      '信念 ('+Math.round(s.cursor.x)+','+Math.round(s.cursor.y)+')';
+    document.getElementById('atomState').textContent =
+      'in_flight='+(s.busy?1:0)+' pending='+(s.pending?1:0)
+      +' sent='+s.sent+' coalesced='+s.coalesced+' err='+s.errors;
+    document.getElementById('busyTxt').textContent = s.busy?'（设备忙）':'';
+  }catch(e){}
+}
+
+/* ---------- 增强：点画面（保留，开环） ---------- */
+function toSCR(ev){
+  const r=screen.getBoundingClientRect();
+  return [Math.round((ev.clientX-r.left)/r.width*SCR_W),
+          Math.round((ev.clientY-r.top)/r.height*SCR_H)];
+}
+function drawGrid(on){
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  if(!on)return;
+  ctx.strokeStyle='rgba(0,200,255,0.5)';ctx.lineWidth=1;
+  for(let i=1;i<3;i++){const x=overlay.width*i/3,y=overlay.height*i/3;
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,overlay.height);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(overlay.width,y);ctx.stroke();}
+  ctx.fillStyle='#0cf';
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++){ctx.beginPath();
+    ctx.arc(overlay.width*(i+0.5)/3,overlay.height*(j+0.5)/3,4,0,7);ctx.fill();}
+}
+document.getElementById('showGrid').onchange=e=>drawGrid(e.target.checked);
+let down=null;
+screen.addEventListener('pointerdown',e=>{down=toSCR(e);});
+screen.addEventListener('pointerup',async e=>{
+  const up=toSCR(e);
+  if(!down)return;
+  const same=(down[0]===up[0]&&down[1]===up[1]);
+  if(same){
+    const d=await post('/api/v1/tap',{x:up[0],y:up[1]});
+    show(up[0],up[1],d);
+  }else{
+    const d=await post('/api/v1/swipe',{x0:down[0],y0:down[1],x1:up[0],y1:up[1],duration_ms:200});
+    show(up[0],up[1],d);
+  }
+  down=null;
+});
+function show(x,y,d){
+  document.getElementById('scr').textContent='('+x+','+y+')';
+  const r=d.hid_report||d.hid_report_end||[];
+  document.getElementById('hid').textContent='('+(d.hid_x??'-')+','+(d.hid_y??'-')+')';
+  document.getElementById('report').textContent='['+r.join(',')+']';
+  echo.textContent=JSON.stringify(d);
+}
+
+/* ---------- 系统键 / 标定 / 健康 ---------- */
+document.querySelectorAll('button[data-key]').forEach(b=>{
+  b.onclick=async()=>{log('KEY '+b.dataset.key+' -> '+JSON.stringify(await post('/api/v1/key',{key:b.dataset.key})));};
+});
+document.getElementById('calBtn').onclick=async()=>{
+  for(let i=0;i<9;i++){await post('/api/v1/calibrate/point',{index:i,cap_x:i,cap_y:i});}
+  log('CALIBRATE -> '+JSON.stringify(await post('/api/v1/calibrate/commit',{device_id:'demo'})));
+};
+(async()=>{
+  /* 设备信息面板：结构化渲染 /api/v1/sysinfo。
+   * 旧的实现是 JSON.stringify(...).slice(0,160) —— 截断的裸 JSON 几乎无法读，
+   * 且把存储/内存这类关键信息整段丢掉（连字段名都看不全）。
+   * 🔴 字段口径与 shared/api_schema.yaml 同步：NVS 是条目制，字节数带 _est
+   * 后缀（估算）；tasks 只报 stack_free（历史最小剩余），无栈容量。 */
+  const fmtB=b=>b==null?'–':(b>=1048576?(b/1048576).toFixed(1)+' MB'
+    :(b>=1024?(b/1024).toFixed(1)+' KiB':b+' B'));
+  async function pollSysinfo(){
+    try{
+      const r=await fetch('/api/v1/sysinfo');
+      if(!r.ok){ document.getElementById('siNvs').textContent='读取失败 ('+r.status+')'; return; }
+      const j=await r.json();
+      const nvs=j.nvs||{}, mem=j.mem||{};
+      document.getElementById('siNvs').textContent='NVS 存储：'+(nvs.valid
+        ?('条目 '+nvs.used_entries+'/'+nvs.total_entries+' · 约 '+fmtB(nvs.used_bytes_est)
+          +'（分区 '+fmtB(nvs.part_size)+'，'+nvs.namespace_count+' 个命名空间）')
+        :'分区不可读');
+      /* 内部堆口径：只算内部 RAM（不含 PSRAM）。⚠ 不要拿 /health 的 free_heap 比——
+         那个是 esp_get_free_heap_size()，含 PSRAM，数值大一个量级。 */
+      const he=document.getElementById('siHeap');
+      he.textContent='内部堆：'+fmtB(mem.heap_free)
+        +' / 总量 '+fmtB(mem.internal_total)
+        +' / 历史最低 '+fmtB(mem.heap_min_free)
+        +' · 最大连续块 '+fmtB(mem.heap_largest)
+        +(mem.heap_free<16384?'  ⛔ 内部堆紧张，WiFi/BLE 可能分配失败'
+          :(mem.heap_free<32768?'  ⚠ 内部堆偏低':''));
+      const pct=mem.psram_total?(mem.psram_free/mem.psram_total):1;
+      document.getElementById('siPsram').textContent='PSRAM：'+(mem.psram_total
+        ?(fmtB(mem.psram_free)+' / '+fmtB(mem.psram_total)+'（'+Math.round(pct*100)+'%）')
+        :'未启用')
+        +(mem.psram_total&&pct<0.15?'  ⚠ 余量偏低，相机帧缓冲可能分配失败':'');
+      const parts=j.partitions||[];
+      document.getElementById('siParts').textContent='分区表：'+(parts.length
+        ?parts.map(p=>p.label+' '+fmtB(p.size)+(p.mounted?'':'（未挂载）')).join('  ·  ')
+        :'–');
+      /* 危险阈值用绝对字节数（无栈容量可算百分比）：<1KiB ⚠，<512B 严重 */
+      const ts=j.tasks||[];
+      document.getElementById('siTasks').textContent='任务栈余量：'+(ts.length
+        ?ts.map(t=>t.name+' 剩余 '+fmtB(t.stack_free)+(t.stack_free<512?' ⛔':(t.stack_free<1024?' ⚠':''))).join('　')
+        :'未查到关注的任务');
+    }catch(e){
+      document.getElementById('siNvs').textContent='读取异常: '+e;
+    }
+  }
+  const h=async()=>{try{
+    document.getElementById('health').textContent=
+      JSON.stringify(await(await fetch('/api/v1/health')).json()).slice(0,160);
+  }catch(e){}};
+  await h(); await pollSysinfo(); await pollState();
+  setInterval(h,5000); setInterval(pollState,800); setInterval(pollSysinfo,9000);
+})();
+</script>
+<script>
+/* 画面调节：几何（旋转/镜像/翻转 = CSS transform，含 .cam-adjust-sync 标定层同步）+ 相机
+ * 传感器（曝光/对比度/饱和度 = 真实 /api/v1/camera，失败回退 CSS filter 近似）。
+ * 传感器参数直接改 OV2640，整路推流都生效；故成功时清掉 CSS filter 避免双重叠加。
+ * 设置持久化到 localStorage（按站点独立）。 */
+(function(){
+  const KEY='qshou-cam-adjust-v2';
+  const img=document.getElementById('screen')||document.getElementById('cam');
+  if(!img)return;
+  const container=img.parentElement;
+  const syncs=[...document.querySelectorAll('.cam-adjust-sync')];
+  const els={rot:document.getElementById('adjRot'),mirror:document.getElementById('adjMirror'),
+    flip:document.getElementById('adjFlip'),exp:document.getElementById('adjExp'),
+    con:document.getElementById('adjCon'),sat:document.getElementById('adjSat'),
+    expV:document.getElementById('adjExpV'),conV:document.getElementById('adjConV'),
+    satV:document.getElementById('adjSatV'),reset:document.getElementById('adjReset')};
+  if(!els.rot)return;
+  let st={rot:0,mirror:false,flip:false,exp:0,con:0,sat:0};
+  try{const s=JSON.parse(localStorage.getItem(KEY));if(s)Object.assign(st,s);}catch(e){}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(st));}catch(e){}}
+  function applyGeom(){
+    const mx=st.mirror?-1:1, my=st.flip?-1:1;
+    const W=container.clientWidth||img.clientWidth, H=container.clientHeight||img.clientHeight;
+    const w=img.clientWidth, h=img.clientHeight;
+    let fit=1;
+    if(st.rot%180!==0 && w && h && W && H){
+      const a=st.rot*Math.PI/180;
+      const bw=Math.abs(w*Math.cos(a))+Math.abs(h*Math.sin(a));
+      const bh=Math.abs(w*Math.sin(a))+Math.abs(h*Math.cos(a));
+      fit=Math.min(W/bw,H/bh,1);
+      if(!isFinite(fit)||fit<=0)fit=1;
+    }
+    const t='rotate('+st.rot+'deg) scale('+(fit*mx)+','+(fit*my)+')';
+    [img,...syncs].forEach(el=>{el.style.transformOrigin='center center';el.style.transform=t;});
+    container.style.overflow='hidden';
+  }
+  function applyFallbackFilter(){
+    const f='brightness('+(1+st.exp/100*0.6)+') contrast('+(1+st.con/100*0.6)+') saturate('+(1+st.sat/100)+')';
+    [img,...syncs].forEach(el=>el.style.filter=f);
+  }
+  function clearFilter(){[img,...syncs].forEach(el=>el.style.filter='');}
+  let sensorTimer=null;
+  async function applySensor(){
+    if(sensorTimer)clearTimeout(sensorTimer);
+    sensorTimer=setTimeout(async()=>{
+      const payload={
+        exposure_auto: st.exp===0?1:0,
+        exposure_value: st.exp===0?0:Math.round(st.exp/100*1200),
+        contrast: Math.round(st.con/100*2),
+        saturation: Math.round(st.sat/100*2)
+      };
+      try{
+        const r=await fetch('/api/v1/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(r.ok){ clearFilter(); return; }
+      }catch(e){}
+      applyFallbackFilter();   // 旧固件/离线：CSS 近似
+    },150);
+  }
+  function syncUI(){
+    [...els.rot.children].forEach(b=>b.classList.toggle('on',+b.dataset.rot===st.rot));
+    els.mirror.checked=st.mirror; els.flip.checked=st.flip;
+    els.exp.value=st.exp; els.con.value=st.con; els.sat.value=st.sat;
+    els.expV.textContent=(st.exp===0?'自动':st.exp); els.conV.textContent=st.con; els.satV.textContent=st.sat;
+  }
+  els.rot.addEventListener('click',e=>{const b=e.target.closest('button[data-rot]');if(!b)return;st.rot=+b.dataset.rot;syncUI();applyGeom();save();});
+  els.mirror.addEventListener('change',()=>{st.mirror=els.mirror.checked;applyGeom();save();});
+  els.flip.addEventListener('change',()=>{st.flip=els.flip.checked;applyGeom();save();});
+  [['exp',els.exp,els.expV],['con',els.con,els.conV],['sat',els.sat,els.satV]].forEach(([k,el,v])=>{
+    el.addEventListener('input',()=>{st[k]=+el.value; if(k==='exp')v.textContent=(st.exp===0?'自动':st.exp); else v.textContent=el.value; applySensor(); save();});
+  });
+  els.reset.addEventListener('click',()=>{st={rot:0,mirror:false,flip:false,exp:0,con:0,sat:0};syncUI();applyGeom();clearFilter();applySensor();save();});
+  window.addEventListener('resize',applyGeom);
+  img.addEventListener('load',applyGeom);
+  syncUI(); applyGeom();
+})();
+</script>
+</body></html>

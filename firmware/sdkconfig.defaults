@@ -1,0 +1,116 @@
+# sdkconfig.defaults — ESP32-S3-N16R8 默认配置
+#
+# 目标硬件：ESP32-S3-N16R8 = 16MB Flash + 8MB Octal PSRAM
+# 参考 docs/partition_pin_plan.md 的分区与引脚预案。
+#
+# 用法：idf.py set-target esp32s3 会读取本文件；改配置后
+#       idf.py build 会自动合并（或删 sdkconfig 重新生成）。
+
+# ---- 目标芯片 ----
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- Flash：16MB，QIO 80MHz ----
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# ---- PSRAM：8MB Octal（N16R8 的 R8 = Octal PSRAM）----
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# 摄像头帧缓冲放 PSRAM（VGA 单帧 20-60KB）
+CONFIG_SPIRAM_CACHE_WORKAROUND=y
+
+# ---- CPU：240MHz，双核 ----
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# ---- 分区表：自定义（应用分区要容纳固件，另留 NVS 存 WiFi 凭据/标定 profile）----
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- 日志：默认 INFO；BLE/HTTP 细节可运行时调 ----
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_COLORS=y
+
+# ---- 控制台输出通道 ----
+# 【2026-10-17 修正】原文假设「板子无 USB-UART 桥、UART0 未引出」，该假设
+# **与实际硬件不符**：实测两板均有 CH343（VID 1A86:PID 55D3 → COM3/COM4），
+# UART0（GPIO43-44）已引出且日志可读（B 板 bring-up 时据此定位了重启死循环）。
+#
+# 现行方案（两板通用）：
+#   主控制台 = UART0（CH343）—— bootloader / app / panic 输出全部可见；
+#   次控制台 = 无。
+#     ⚠️ USB-Serial-JTAG 必须关闭：它占用 USB PHY（GPIO19/20），与
+#        USB-OTG HID 互斥（见 docs/usb_hid_plan.md §2.2）。
+#        关掉后不影响烧写 —— ROM 的 USB 下载走 USJ 而非 OTG，
+#        且我们始终走 CH343 UART 口烧写，救砖路径不变。
+#
+# 注意 choice 项的写法：必须显式清掉同一 choice 里的其他选项，
+# 否则 defaults 与已有 sdkconfig 合并时可能保留旧值。
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_CUSTOM=n
+CONFIG_ESP_CONSOLE_USB_CDC=n
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
+CONFIG_ESP_CONSOLE_NONE=n
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=n
+
+# ---- USB HID（Phase 0）：ESP32-S3 原生 USB-OTG ----
+# TinyUSB HID 接口数 = 1 → Boot Keyboard（实现见 platform/esp32/platform_usb.c）。
+# 这是官方示例 examples/peripherals/usb/device/tusb_hid 的唯一必需项。
+# ⚠️ 默认值是 0（不启用任何 HID class）—— 不显式打开则编译出的固件无 HID 功能。
+# Phase 1 做复合设备（鼠标 + 键盘 + Consumer 三 Report ID）时改这里。
+CONFIG_TINYUSB_HID_COUNT=2
+
+# ---- HTTP 服务器 ----
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=256
+# WebSocket 服务端支持（P4 /api/v1/events 事件通道）。
+# ⚠️ 改 sdkconfig 会触发**全量重编**（~44min）。开启后 /api/v1/events 以
+#    HTTP_GET + is_websocket 注册，走 httpd 原生帧处理（省掉手写 RFC6455）。
+#    安全性已核实：httpd 握手成功后把该 session 标记 for_async_req，
+#    此后不再进入 select 集合（esp_http_server/src/httpd_sess.c 的
+#    HTTPD_TASK_SET_DESCRIPTOR 跳过 FD_SET），因此 WS 长连接**不会**
+#    像 MJPEG 的 while(1) 那样霸占 httpd 唯一任务。
+CONFIG_HTTPD_WS_SUPPORT=y
+# 注意：故意**不开** HTTPD_QUEUE_WORK_BLOCKING —— mbox 满时 httpd_queue_work
+# 返回 ESP_FAIL，我们据此直接丢弃该条事件（遥测语义可接受），不让任意
+# 任务（相机/BLE/HTTP）被阻塞到 httpd 队列空出来。
+
+# ---- BLE：NimBLE（体积小、无第三方依赖；规避 Arduino BLEDevice.h）----
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_HID_SERVICE=y
+# 绑定密钥落 NVS：让安卓"已配对"条目跨重启持久化、开机自动重连。
+# ⚠️ 默认是 n！不开则 bond 只存 RAM，掉电即失 → 每次开机都得重新配对。
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+# 最多保存 3 个 bond（够用；与其它 HID 设备共存时也不至于溢出）
+CONFIG_BT_NIMBLE_MAX_BONDS=3
+# BLE 与 WiFi 共存需软件协同
+CONFIG_SW_COEXIST_ENABLE=y
+
+# ---- WiFi：STA ----
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+
+# ---- 编译器：开警告，帮提前发现真实缺陷 ----
+CONFIG_COMPILER_WARN_WRITE_STRINGS=y
+CONFIG_COMPILER_DISABLE_GCC12_WARNINGS=n
+
+# ---- 优化：默认 -Og（调试友好），发版可切 -Os 减体积 ----
+CONFIG_COMPILER_OPTIMIZATION_DEFAULT=y
+
+# ---- 应用信息 ----
+CONFIG_APP_PROJECT_VER="0.1.0-pre"

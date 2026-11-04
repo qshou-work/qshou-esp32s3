@@ -1,0 +1,21 @@
+## IDF Component Manager Manifest File
+dependencies:
+  ## Required IDF version
+  idf:
+    version: '>=4.1.0'
+  # # Put list of dependencies here
+  # # For components maintained by Espressif:
+  # component: "~1.0.0"
+  # # For 3rd party components:
+  # username/component: ">=1.0.0,<2.0.0"
+  # username2/component2:
+  #   version: "~1.0.0"
+  #   # For transient dependencies `public` flag can be set.
+  #   # `public` flag doesn't have an effect dependencies of the `main` component.
+  #   # All dependencies of `main` are public by default.
+  #   public: true
+  espressif/esp32-camera: ^2.0.0
+  espressif/mdns: "^1.0.0"
+  # USB HID（Phase 0）：ESP32-S3 原生 USB-OTG 上的 TinyUSB。
+  # 版本对齐 IDF v6.1 官方示例 examples/peripherals/usb/device/tusb_hid。
+  espressif/esp_tinyusb: "^2.0.1~1"

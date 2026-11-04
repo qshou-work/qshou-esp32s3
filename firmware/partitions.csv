@@ -1,0 +1,22 @@
+﻿# partitions.csv — 自定义分区表（**4MB 兼容布局，A/B 两块板通用**）
+#
+# ⚠️ B 板的 flash 芯片虚报 16MB（型号码 0x4018 抄 W25Q128，厂商码 0x68），
+#    实际只有 4MB。bootloader 会逐条校验分区是否越界（flash_partitions.c:26
+#    `pos->size > chip_size - pos->offset`），越界直接 bootloader_reset() 死循环。
+#    因此本布局必须完整落在 4MB (0x400000) 之内。
+#
+# 布局说明（参考 docs/partition_pin_plan.md）：
+#   nvs        24KB   WiFi 凭据 / device_id / 标定 profile
+#   phy_init    4KB   射频校准数据（ESP-IDF 要求）
+#   factory     2MB   应用固件（MJPEG + BLE HID + HTTP；当前实测 1.36MB，余量 46%）
+#   storage   1.9MB   预留（标定图、静态前端资源）；注意固件当前未挂载该分区
+#
+# 烧写注意：
+#   A 板（真 16MB）→ 可按 sdkconfig 默认 16MB 烧，也可用 4MB，都能启动
+#   B 板（实际 4MB）→ **必须** 用 --flash-size 4MB 烧，否则 bootloader 死循环
+#
+# Name,     Type, SubType, Offset,   Size,    Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x200000,
+storage,    data, spiffs,  0x210000, 0x1E0000,

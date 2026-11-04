@@ -1,0 +1,158 @@
+{
+  "device": "192.168.65.53",
+  "axis": "x",
+  "step_ms": 90,
+  "records": [
+    {
+      "axis": "x",
+      "counts": 150,
+      "steps_eff": 12,
+      "step_ms_eff": 90,
+      "budget": 1524,
+      "shortfall": 0,
+      "cmd_net": [
+        150,
+        0
+      ],
+      "frames": 14,
+      "sent": 14,
+      "drop": 0,
+      "net_dx": 150,
+      "net_dy": 0,
+      "jit_ms": [
+        89,
+        89,
+        90
+      ],
+      "velocity_counts_per_ms": 0.1389,
+      "n_blobs": 2,
+      "stable": 1,
+      "mean_before": 67.8,
+      "mean_after": 67.8,
+      "mean_delta": 0.03,
+      "sat_frac": 0.1712,
+      "net_ok": true,
+      "screen_ok": 1,
+      "screen_area_frac": 0.1959,
+      "pair_area_ratio": 1.73,
+      "pair_sep_px": 42.2,
+      "pair_peak": [
+        187.2,
+        119.7
+      ],
+      "ok": true,
+      "delta_px": 42.246153846153874,
+      "gain_cap_px_per_count": 0.28164102564102583,
+      "area_old": 15,
+      "area_new": 26,
+      "cursor_extent_px": 5.0,
+      "counts_requested": 150
+    },
+    {
+      "axis": "x",
+      "counts": 300,
+      "steps_eff": 12,
+      "step_ms_eff": 90,
+      "budget": 1524,
+      "shortfall": 0,
+      "cmd_net": [
+        300,
+        0
+      ],
+      "frames": 14,
+      "sent": 14,
+      "drop": 0,
+      "net_dx": 300,
+      "net_dy": 0,
+      "jit_ms": [
+        89,
+        89,
+        90
+      ],
+      "velocity_counts_per_ms": 0.2778,
+      "n_blobs": 2,
+      "stable": 1,
+      "mean_before": 67.8,
+      "mean_after": 67.8,
+      "mean_delta": 0.02,
+      "sat_frac": 0.1711,
+      "net_ok": true,
+      "screen_ok": 1,
+      "screen_area_frac": 0.196,
+      "pair_area_ratio": 1.29,
+      "pair_sep_px": 83.9,
+      "pair_peak": [
+        191.4,
+        137.4
+      ],
+      "ok": true,
+      "delta_px": 83.92592592592592,
+      "gain_cap_px_per_count": 0.2797530864197531,
+      "area_old": 21,
+      "area_new": 27,
+      "cursor_extent_px": 5.0,
+      "counts_requested": 300
+    },
+    {
+      "axis": "x",
+      "counts": 523,
+      "steps_eff": 12,
+      "step_ms_eff": 90,
+      "budget": 1524,
+      "shortfall": 0,
+      "cmd_net": [
+        523,
+        0
+      ],
+      "frames": 14,
+      "sent": 14,
+      "drop": 0,
+      "net_dx": 523,
+      "net_dy": 0,
+      "jit_ms": [
+        89,
+        89,
+        90
+      ],
+      "velocity_counts_per_ms": 0.4843,
+      "n_blobs": 2,
+      "stable": 1,
+      "mean_before": 67.8,
+      "mean_after": 67.8,
+      "mean_delta": 0.03,
+      "sat_frac": 0.1713,
+      "net_ok": true,
+      "screen_ok": 1,
+      "screen_area_frac": 0.196,
+      "pair_area_ratio": 1.25,
+      "pair_sep_px": 145.2,
+      "pair_peak": [
+        150.1,
+        135.9
+      ],
+      "ok": true,
+      "delta_px": 145.25,
+      "gain_cap_px_per_count": 0.2777246653919694,
+      "area_old": 16,
+      "area_new": 20,
+      "cursor_extent_px": 4.0,
+      "counts_requested": 600
+    }
+  ],
+  "fit": null,
+  "fit_by_axis": {
+    "x": {
+      "ok": true,
+      "n": 3,
+      "gain": 0.278426,
+      "r2": 0.999982,
+      "per_point_gain": [
+        0.281641,
+        0.279753,
+        0.277725
+      ],
+      "spread": 1.0141,
+      "residual_max_px": 0.482
+    }
+  }
+}

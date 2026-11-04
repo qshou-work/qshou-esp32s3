@@ -1,0 +1,58 @@
+# ---- ESP-IDF 构建产物 ----
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+*.bin
+*.elf
+*.map
+
+# ---- C 编译产物 ----
+*.o
+*.obj
+*.a
+*.exe
+*.pdb
+firmware/tests/test_firmware_c
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ---- 本机凭据（不入库！）----
+# 真实 SSID/密码只存在于本机；模板见 qshou_wifi_creds.h.example。
+# 构建时若缺失，main/CMakeLists.txt 会从模板生成空表。
+firmware/platform/esp32/qshou_wifi_creds.h
+tools/wifi_credentials.nvs.csv
+tools/wifi_credentials.bin
+# MCP broker 的访问令牌（模板 broker/tokens.example.json）
+broker/tokens.json
+
+# ---- 测试证据（保留目录，忽略临时产物）----
+tests/evidence/*.tmp
+
+# ---- 调试日志 / 现场抓包（历史留档在 docs/evidence 与 tests/evidence）----
+*.log
+_*.txt
+boot_check.txt
+.workbuddy-ai_*
+.tmp/
+.tmp_schema.json
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 本地临时 ----
+_cleanup_backup/

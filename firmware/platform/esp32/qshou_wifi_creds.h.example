@@ -1,0 +1,30 @@
+/*
+ * qshou_wifi_creds.h.example — 固件内置备用 WiFi 凭据模板（空表）
+ *
+ * 构建时若同目录没有 qshou_wifi_creds.h，CMake 会自动复制本文件生成一份，
+ * 因此**全新克隆开箱即可编译**，此时备用表为空。
+ *
+ * 要内置备用网络：
+ *   1. 编辑 platform/esp32/qshou_wifi_creds.h（该文件已被 .gitignore 排除，不入库）
+ *   2. 把下面的空宏改成「逗号分隔、末尾带逗号」的初始化项，例如：
+ *
+ *          #define QSHOU_EXTRA_WIFI_CREDS \
+ *              { "ssid-A", "pass-A" }, \
+ *              { "ssid-B", "pass-B" },
+ *
+ *   3. 重新构建。顺序 = 优先级（从高到低），设备连「可见且已配置」的第一条。
+ *
+ * 说明：
+ *   - 本表只是**兜底**。正常路径是 NVS 里的 wifi_ssid/wifi_pass
+ *     （浏览器 UI 或 POST /api/v1/settings 写入，冷生效），NVS 永远优先。
+ *   - 凭据编译进 app 分区、不写 NVS，所以不会破坏 BLE bonding。
+ *   - 备用表为空时，若 NVS 也没有凭据，设备会打
+ *     "no wifi credential at all; skipping STA" 并跳过联网（非致命）。
+ */
+#ifndef QSHOU_WIFI_CREDS_H
+#define QSHOU_WIFI_CREDS_H
+
+/* 空表：没有内置备用网络 */
+#define QSHOU_EXTRA_WIFI_CREDS
+
+#endif /* QSHOU_WIFI_CREDS_H */

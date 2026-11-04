@@ -1,0 +1,1284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Qshou · 终端控制台</title>
+<style>
+  :root { --bg:#0f1420; --card:#1a2233; --fg:#e6edf3; --muted:#8b98a9; --acc:#3b82f6; --ok:#22c55e; --bad:#ef4444; --warn:#f59e0b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 16px; }
+  /* 卡片两列排布：DOM 顺序即视觉顺序（左→右、上→下），
+     配对为「设备状态|设备信息 / 远程画面|相对推进 / 画面调节|点击滑动 /
+     键盘输入|发送文本 / 手势回放|响应日志」。
+     align-items:start 让每张卡片保持自身高度（内容长短不一时不会互相拉伸留白）。 */
+  .cards { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; align-items:start; }
+  .cards > .card { margin-bottom:0; }
+  .card { background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.3); }
+  .card h2 { font-size:13px; margin:0 0 12px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .stat { flex:1 1 30%; min-width:110px; }
+  .stat .k { font-size:12px; color:var(--muted); }
+  .stat .v { font-size:18px; font-weight:600; word-break:break-all; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:13px; font-weight:700; }
+  .pill.on { background:rgba(34,197,94,.15); color:var(--ok); }
+  .pill.off { background:rgba(239,68,68,.15); color:var(--bad); }
+  button { background:var(--acc); color:#fff; border:0; border-radius:10px; padding:12px 14px; font-size:15px; font-weight:600; cursor:pointer; }
+  button.sec { background:#2b3650; }
+  button:active { transform:scale(.97); }
+  .grid { display:grid; gap:10px; }
+  .g2 { grid-template-columns:1fr 1fr; }
+  .g4 { grid-template-columns:repeat(4,1fr); }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:4px; }
+  select, input[type=range] { width:100%; }
+  select { padding:10px; border-radius:10px; border:0; background:#2b3650; color:#fff; font-size:15px; }
+  .val { color:var(--fg); font-weight:700; }
+  #log { background:#0b0f18; border-radius:10px; padding:10px; height:170px; overflow:auto;
+         font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; }
+  .ln { margin:2px 0; }
+  .ln.ok { color:var(--ok); } .ln.err { color:var(--bad); } .ln.info { color:var(--muted); }
+  .hint { font-size:12px; color:var(--muted); margin-top:8px; line-height:1.5; }
+  /* 画面调节面板（预览端，纯 CSS 滤镜/变换，不影响实际推流数据） */
+  .adj-btns{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:10px; }
+  .adj-btns button{ background:#2b3650; color:#fff; border:0; border-radius:10px; padding:10px; font-size:14px; font-weight:600; cursor:pointer; }
+  .adj-btns button.on{ background:var(--acc); }
+  .adj-checks{ display:flex; gap:18px; margin:8px 0 4px; }
+  .adj-checks label{ font-size:13px; color:var(--fg); }
+  .adj-ctl{ display:flex; align-items:center; gap:10px; margin:8px 0; }
+  .adj-ctl label{ font-size:13px; color:var(--muted); min-width:56px; }
+  .adj-ctl input[type=range]{ flex:1; }
+  .adj-ctl .v{ font-size:13px; color:var(--fg); font-weight:700; min-width:34px; text-align:right; }
+  .adj-ctl select{ flex:1; }
+  .adj-step{ flex:0 0 auto; width:30px; height:30px; border:0; border-radius:8px; background:#2b3650; color:#fff; font-size:18px; font-weight:700; line-height:1; cursor:pointer; }
+  .adj-step:hover{ background:#37456a; }
+  .adj-step:active{ background:var(--acc); }
+  .adj-step:disabled{ opacity:.4; cursor:not-allowed; }
+  /* 自动功能开关行（独立 flex，区别于旋转四档的 4 列 grid） */
+  .adj-auto{ display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 2px; }
+  .adj-auto button{ flex:1 1 auto; min-width:84px; background:#2b3650; color:#fff; border:0; border-radius:10px; padding:9px 8px; font-size:13px; font-weight:600; cursor:pointer; }
+  .adj-auto button.on{ background:var(--acc); }
+  .adj-auto button:disabled{ opacity:.45; cursor:not-allowed; }
+  .adj-sub{ font-size:12px; color:var(--muted); margin:10px 0 0; }
+  /* 相对推进摇杆（与控制器端同款交互，但直连本机 /api/v1/gesture） */
+  #stickWrap{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  #stick{ width:130px; height:130px; border-radius:50%; background:#0b0f18;
+          border:2px solid #2b3650; position:relative; touch-action:none;
+          cursor:grab; flex:0 0 auto; user-select:none; }
+  /* 用 translate(-50%,-50%) 定位，与元素尺寸解耦 —— 避免 box-sizing 差异算错中心 */
+  #knob{ position:absolute; width:44px; height:44px; border-radius:50%;
+         background:var(--acc); opacity:.85; pointer-events:none;
+         left:50%; top:50%; transform:translate(-50%,-50%); }
+  #dpad{ display:grid; grid-template-columns:repeat(3,48px); gap:6px; }
+  #dpad button{ width:48px; height:48px; padding:0; margin:0; font-size:17px;
+                background:#2b3650; border-radius:10px; }
+  #dpad button.pri{ background:var(--acc); }
+  #mini{ background:#0b0f18; border:1px solid #2b3650; border-radius:10px; }
+  .seg{ display:inline-flex; border:1px solid #2b3650; border-radius:10px; overflow:hidden; }
+  .seg button{ border:0; border-radius:0; margin:0; padding:8px 12px; font-size:13px; background:#2b3650; }
+  .seg button.on{ background:var(--acc); }
+  /* 「远程画面 + 相对推进」合成**一张横跨整页宽度**的卡片。
+     做法是在 .cards 的两列 grid 里，让这张卡片 grid-column:1/-1 占满整行，
+     内部再用 flex 分成左右两栏：
+       · 左栏 .pane-prev = 远程预览，flex:1 自适应 → 比原来的半栏宽得多；
+       · 右栏 .pane-rel  = 相对推进，定宽 340px   → 比原来的半栏窄；
+       · align-items:stretch → 左右两栏**等高**（矮的一栏被拉同高，不错位留白）。
+     ⚠️ .cards 的两列 grid 定义、媒体查询、以及所有 <h2> 的**文本与 DOM 顺序
+        都未改动**，故下边三行卡片仍按原配对两列排布，不受影响。 */
+  .card-row{ grid-column:1/-1; display:flex; gap:16px; align-items:stretch; }
+  .pane-prev{ flex:1 1 auto; min-width:0; }
+  .pane-rel{ flex:0 0 232px; min-width:0; display:flex; flex-direction:column; }
+  /* 右栏「相对推进」编排（2026-10-03）—— 目标是**把宽度让给预览**：
+       · 单列窄化（宽度 340 → 232，预览栏多拿 108px），可用内宽
+         = 232 − 卡片左右 padding 32 = **200px**（下面所有尺寸都不准超过它）；
+       · **信念方框图（#mini）独占一行置顶**：原先它与摇杆并排，正是摇杆被
+         挤成 100px 的原因；拆开后两者各自整行，摇杆才放得开；
+       · 摇杆 176px（两侧各留 12px 居中）。行程 = 176/2 − knobR(22)
+         = **66px**（原先 100/2 − 22 = 28px），细操精度提升明显；
+         ⚠️ JS 半径用 stick.getBoundingClientRect() 动态读（非硬编码），
+            且全局 box-sizing:border-box，故改 CSS 尺寸不需要同步改 JS；
+       · 速度 / 模式各占整行，seg 按钮 flex:1 均分 → 文案变长也不会推宽本栏；
+       · 方向键（142px）、归零按钮（100%）各占整行；
+       · 底部说明 margin-top:auto 吸底 —— 本栏被左侧预览拉高，内容比它矮，
+         把说明顶到下面可避免出现一整块无意义的空白。
+     ⚠️ 以下全部限定在 .pane-rel 作用域内：其余卡片的 #stick/#dpad/#mini
+        仍是原尺寸（130 / 48 / 原样），不受影响。 */
+  .pane-rel .rel-line{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .pane-rel .rel-lab{ flex:0 0 auto; font-size:12px; color:var(--muted); }
+  .pane-rel .seg{ display:flex; flex:1 1 auto; min-width:0; }
+  .pane-rel .seg button{ flex:1 1 0; padding:6px 4px; font-size:11.5px; white-space:nowrap; }
+  .pane-rel .rel-mini{ display:flex; flex-direction:column; align-items:center; margin-bottom:10px; }
+  .pane-rel #mini{ width:96px; height:96px; }
+  .pane-rel #stickWrap{ justify-content:center; margin-bottom:10px; }
+  .pane-rel #stick{ width:176px; height:176px; }
+  .pane-rel #dpad{ grid-template-columns:repeat(3,44px); gap:5px; justify-content:center; }
+  .pane-rel #dpad button{ width:44px; height:44px; font-size:16px; }
+  .pane-rel #cursorTxt{ font-size:11px; color:var(--muted); margin-top:4px; text-align:center; }
+  .pane-rel #anchorBtn{ width:100%; padding:8px 6px; font-size:12px; }
+  .pane-rel #modeHint{ font-size:11px; color:var(--muted); margin-top:4px; }
+  .pane-rel > .hint{ margin-top:auto; font-size:11px; line-height:1.55; }
+  /* 防休眠（keep-awake）控件块 —— 仅作用于「点击 / 滑动」卡片内 */
+  .ka-box{ margin-top:12px; padding-top:10px; border-top:1px solid #2b3650; }
+  .ka-head{ display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+  /* 作用域限定：不改动全局 button 样式，避免影响其它卡片 */
+  .ka-box button.on{ background:var(--acc); }
+  .ka-next{ font-size:12px; color:var(--muted); }
+  .ka-next b{ color:var(--fg); }
+  /* 预览框占位图：内联 SVG（≈0.5KB，随 CSS 走，**不新增任何二进制文件**）。
+     ⚠️ 为什么必须是 SVG 而不是 base64 位图：ui.html 由 CMake 的
+        EMBED_TXTFILES 直接编进固件二进制，**每字节都落在 flash 上**；
+        一张哪怕是 8KB 的 base64 JPEG 占位图也会实打实吃掉 8KB flash，
+        而矢量 SVG 描述同样的画面只需几百字节，且任意缩放不糊。
+     - background-size:contain + 居中：占位图按 **9:20 竖屏**轮廓显示，
+       预告真实画面的比例；四周多出的地方由 background-color 兜底。
+     - height 用 clamp 给足初始高度：原先未推流时 <img> 没有 src，
+       高度塌成 min-height:120px 的一条窄黑框，观感很突兀。 */
+  .cam-frame{
+    /* ⚠️ contain 模式下画面大小由**高度**决定（宽度只影响两侧留黑边的多少）
+       —— 右栏改窄换来的宽度并不会让画面变大，必须同步抬高上限。 */
+    height:clamp(360px,64vh,680px);
+    background-color:#0b0f18;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 360 800'%3E%3Crect x='8' y='8' width='344' height='784' rx='18' fill='%23101725' stroke='%2324304a' stroke-width='3'/%3E%3Crect x='118' y='352' width='124' height='88' rx='12' fill='none' stroke='%233d4b6b' stroke-width='5'/%3E%3Ccircle cx='180' cy='396' r='24' fill='none' stroke='%233d4b6b' stroke-width='5'/%3E%3Ccircle cx='180' cy='396' r='7' fill='%233d4b6b'/%3E%3Crect x='214' y='364' width='16' height='9' rx='3' fill='%233d4b6b'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:center; background-size:contain;
+    border:1px solid #2b3650; border-radius:10px; overflow:hidden;
+  }
+  /* object-fit:contain —— 真实画面是 360x800 竖屏，左栏变宽后若仍用
+     width:100% 等比拉伸，会把画面拉成两三千像素高的超长条；contain 让它
+     等比居中、两侧留黑边，也顺带保住了 applyGeom() 旋转 90/270 时的
+     fit 计算（用的是元素盒 clientWidth/Height，不会溢出容器）。 */
+  #cam{ width:100%; height:100%; display:block; object-fit:contain; }
+  /* 窄屏回退：卡片先并成一列，卡片内部的 .g2 再并成一列 */
+  @media (max-width:760px){ .cards{ grid-template-columns:1fr; } }
+  @media (max-width:480px){ .g2{ grid-template-columns:1fr; } }
+  /* 窄屏下这张合并卡改成上下堆叠，右栏恢复自适应（否则定宽会顶出横向滚动） */
+  @media (max-width:760px){ .card-row{ flex-direction:column; } .pane-rel{ flex:1 1 auto; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🖱️ Qshou 测试台</h1>
+
+  <div class="cards">
+
+  <div class="card">
+    <h2>设备状态</h2>
+    <div class="row" style="margin-bottom:12px;">
+      <div class="stat"><div class="k">BLE 连接</div><div class="v"><span id="ble" class="pill off">未知</span></div></div>
+      <div class="stat"><div class="k">WiFi RSSI</div><div class="v" id="rssi">–</div></div>
+      <div class="stat"><div class="k">运行时间</div><div class="v" id="uptime">–</div></div>
+    </div>
+    <div class="row">
+      <div class="stat"><div class="k">空闲堆（含 PSRAM）</div><div class="v" id="heap">–</div></div>
+      <div class="stat"><div class="k">最近取帧</div><div class="v" id="frame">–</div></div>
+      <div class="stat"><div class="k">复位原因</div><div class="v" id="reset" style="font-size:13px">–</div></div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="stat"><div class="k">上次手势（帧数 · 净位移 · 节奏 min/avg/max）</div><div class="v" id="gest" style="font-size:13px">–</div></div>
+    </div>
+    <div class="hint">复合 HID：<b>Report 1=相对鼠标 / 2=键盘 / 3=Consumer</b>。<b>上次手势</b>净位移 box/circle/tap 应为 (0,0)（绿）；非 0（橙）说明固件帧序列有问题。真实光标位移请在<b>目标设备</b>屏幕上观察。</div>
+  </div>
+
+  <div class="card">
+    <h2>设备信息</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <div class="stat"><div class="k">NVS（条目 / 估算占用）</div><div class="v" id="siNvs" style="font-size:13px">–</div></div>
+      <div class="stat"><div class="k">内部堆（当前 / 历史最低 / 总量）</div><div class="v" id="siHeap" style="font-size:13px">–</div></div>
+      <div class="stat"><div class="k">PSRAM（可用 / 总量）</div><div class="v" id="siPsram" style="font-size:13px">–</div></div>
+    </div>
+    <div class="row" style="margin-bottom:10px;">
+      <div class="stat"><div class="k">分区表</div><div class="v" id="siParts" style="font-size:12px">–</div></div>
+    </div>
+    <div class="row">
+      <div class="stat"><div class="k">任务栈余量（越接近 0 越危险）</div><div class="v" id="siTasks" style="font-size:12px">–</div></div>
+    </div>
+    <div class="hint">「内部堆」只算<b>内部 RAM</b>（WiFi/BLE/DMA 缓冲的稀缺来源）；<code>/api/v1/health</code> 的 <code>free_heap</code> <b>含 PSRAM</b>，两者<b>不可直接比较</b>（相加才等于它）。<code>storage</code>(1MB) 未挂载，故不报文件系统占用。</div>
+  </div>
+
+  <div class="card card-row">
+    <div class="pane-prev">
+      <h2>远程画面</h2>
+      <div class="grid g2" style="margin-bottom:8px;">
+        <button id="streambtn" onclick="togglePull()">▶ 开始预览</button>
+        <button class="sec" onclick="snapshot()">📷 单帧截图</button>
+      </div>
+      <div class="adj-ctl" style="margin-bottom:8px;">
+        <label>刷新率</label>
+        <input type="range" id="pullFps" min="2" max="25" step="1" value="15" oninput="document.getElementById('pullFpsV').textContent=this.value+' fps'"><span class="v" id="pullFpsV" style="min-width:52px">15 fps</span>
+      </div>
+      <div class="cam-frame">
+        <img id="cam" alt="等待预览…">
+      </div>
+      <div class="hint">预览走 80 端口 <code>GET /snapshot</code>：浏览器按上方「刷新率」<b>主动拉取</b>设备相机缓存的最新帧（<code>CAMERA_GRAB_LATEST</code> 始终保留最新画面）。每次都是短请求、失败自动重试，<b>不占用</b>独占连接，也不中断鼠标/键盘。</div>
+    </div>
+
+    <div class="pane-rel">
+      <h2>相对推进（零标定）</h2>
+      <!-- 信念方框图：独占一行置顶（原先与摇杆并排，限制了摇杆尺寸） -->
+      <div class="rel-mini">
+        <canvas id="mini" width="120" height="120"></canvas>
+        <div id="cursorTxt">信念 (–,–)</div>
+      </div>
+      <!-- 摇杆：独占一行居中放大到 176px（可用内宽 200px） -->
+      <div id="stickWrap">
+        <div id="stick"><div id="knob"></div></div>
+      </div>
+      <div class="rel-line">
+        <span class="rel-lab">速度</span>
+        <span class="seg" id="speedSeg"></span>
+      </div>
+      <div class="rel-line" style="margin-bottom:8px;">
+        <span class="rel-lab">模式</span>
+        <span class="seg" id="modeSeg">
+          <button data-mode="move" class="on">移动</button>
+          <button data-mode="drag">拖拽</button>
+        </span>
+      </div>
+      <div style="margin-bottom:8px;">
+        <div class="rel-lab" style="margin-bottom:4px;">方向键（单击 = 一步，长按连续）</div>
+        <div id="dpad">
+          <button data-dir="-1,-1">↖</button><button data-dir="0,-1">↑</button><button data-dir="1,-1">↗</button>
+          <button data-dir="-1,0">←</button><button id="dpadClick" class="pri">点</button><button data-dir="1,0">→</button>
+          <button data-dir="-1,1">↙</button><button data-dir="0,1">↓</button><button data-dir="1,1">↘</button>
+        </div>
+      </div>
+      <button class="sec" id="anchorBtn">归零（撞角对齐左上）</button>
+      <div id="modeHint">按住摇杆连续移动（latest-wins，松手即停）· 灵敏度 20%（每 tick 精细 40 / 普通 90 / 快速 180 counts）</div>
+      <!-- 说明精简（2026-10-03）：原文 5 句 220+ 字缩到 3 句，**不丢关键约束**——
+           零标定 / latest-wins 松手即停 / 播完再发下一串 / 归零的绝对定位语义
+           / 拖拽一次性提交，这五点是操作安全边界，压缩时全部保留。
+           被删的主要是重复解释（如「与相对鼠标同构」已由标题「零标定」涵盖）。 -->
+      <div class="hint">位移按 HID <b>相对增量</b>下发 → <b>零标定</b>；<b>latest-wins</b> 背压保证<b>松手即停</b>，且按回包算完<b>播完时刻</b>才发下一串。「归零」推到底（−25000 counts）把光标钳在左上角并复位信念（约 3s），是<b>不依赖视觉的绝对定位</b>；「拖拽」为按住累加、<b>松手一次性提交</b>。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>画面调节</h2>
+    <div class="adj-btns" id="adjRot">
+      <button data-rot="0" class="on">0°</button>
+      <button data-rot="90">90°</button>
+      <button data-rot="180">180°</button>
+      <button data-rot="270">270°</button>
+    </div>
+    <div class="adj-checks">
+      <label><input type="checkbox" id="adjMirror"> 水平镜像</label>
+      <label><input type="checkbox" id="adjFlip"> 垂直翻转</label>
+    </div>
+    <div class="adj-ctl"><label>放大</label><button type="button" class="adj-step" data-id="adjZoom" data-d="-1" aria-label="缩小">-</button><input type="range" id="adjZoom" min="100" max="400" step="10" value="100"><button type="button" class="adj-step" data-id="adjZoom" data-d="1" aria-label="放大">+</button><span class="v" id="adjZoomV">100%</span></div>
+    <div class="adj-ctl"><label>曝光</label><button type="button" class="adj-step" data-id="adjExp" data-d="-1" aria-label="减少曝光">-</button><input type="range" id="adjExp" min="-100" max="100" value="0"><button type="button" class="adj-step" data-id="adjExp" data-d="1" aria-label="增加曝光">+</button><span class="v" id="adjExpV">0</span></div>
+    <div class="adj-ctl"><label>对比度</label><button type="button" class="adj-step" data-id="adjCon" data-d="-1" aria-label="降低对比度">-</button><input type="range" id="adjCon" min="-100" max="100" value="0"><button type="button" class="adj-step" data-id="adjCon" data-d="1" aria-label="提高对比度">+</button><span class="v" id="adjConV">0</span></div>
+    <div class="adj-ctl"><label>饱和度</label><button type="button" class="adj-step" data-id="adjSat" data-d="-1" aria-label="降低饱和度">-</button><input type="range" id="adjSat" min="-100" max="100" value="0"><button type="button" class="adj-step" data-id="adjSat" data-d="1" aria-label="提高饱和度">+</button><span class="v" id="adjSatV">0</span></div>
+    <div class="adj-ctl"><label>分辨率</label>
+      <select id="adjRes">
+        <option value="6">QVGA 320×240</option>
+        <option value="9">480×320</option>
+        <option value="10" selected>VGA 640×480（默认）</option>
+        <option value="11">SVGA 800×600</option>
+        <option value="12">XGA 1024×768</option>
+        <option value="13">720p 1280×720</option>
+        <option value="15">UXGA 1600×1200</option>
+        <option value="16">1080p 1920×1080（需 OV5640）</option>
+      </select>
+    </div>
+    <div class="adj-sub">自动功能（真实改相机传感器，整路推流生效）</div>
+    <div class="adj-auto" id="camAuto">
+      <button data-k="autoExp" id="adjAutoExp" class="on">自动曝光</button>
+      <button data-k="autoWb" id="adjAutoWb" class="on">自动白平衡</button>
+      <button data-k="autoGain" id="adjAutoGain" class="on">自动增益</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <button class="sec" id="adjAutoAll">一键自动（全部开启）</button>
+      <span class="hint" style="margin:0">关闭某项后可用上方滑块做手动曝光；白平衡/增益暂只暴露自动开关。</span>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button class="sec" id="adjReset">重置</button>
+      <span class="hint" style="margin:0">旋转/镜像/放大/翻转=本地预览；曝光/对比度/饱和度=真实改相机（旧固件回退本地滤镜）。</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>点击 / 滑动</h2>
+    <div class="grid g2" style="margin-bottom:10px;">
+      <button class="sec" onclick="tapInPlace()">点击（原地按下/抬起）</button>
+      <button class="sec" onclick="refreshHealth()">手动刷新状态</button>
+    </div>
+    <div class="adj-ctl"><label>距离</label><input type="range" id="dist" min="10" max="400" step="10" value="120"
+         oninput="$('distv').textContent=this.value+' px'"><span class="v" id="distv">120 px</span></div>
+    <label style="margin-top:10px;">四向移动（相对增量，纯移动不点击）</label>
+    <div class="grid g4">
+      <button class="sec" onclick="moveDir('up')">↑</button>
+      <button class="sec" onclick="moveDir('down')">↓</button>
+      <button class="sec" onclick="moveDir('left')">←</button>
+      <button class="sec" onclick="moveDir('right')">→</button>
+    </div>
+    <div class="ka-box">
+      <div class="ka-head">
+        <button class="sec" id="kaBtn" onclick="toggleKeepAwake()">防休眠：已停止</button>
+        <span class="pill off" id="kaState">未启用</span>
+        <span class="ka-next">下次抖动 <b id="kaNext">–</b></span>
+      </div>
+      <div class="adj-ctl"><label>间隔</label><input type="range" id="kaSec" min="0" max="1000" step="1" value="667"><span class="v" id="kaSecv">30s</span></div>
+      <div class="hint">0.3s ~ 300s（滑块为<b>对数刻度</b>，低区可精细调）。开启后按下述间隔下发一次<b>净零抖动</b>（先 +1px 再 −1px，纯移动、<b>不点击</b>），阻止被控端因无操作而变暗 / 休眠。⚠️ 两点须先知：<b>①</b> 一轮抖动是<b>两次</b> HTTP 往返，设备忙时<b>不会</b>叠加堆积，而是「本轮跑完才排下一轮」→ 实际周期 = max(设定值, 设备往返)，pill 上的「实」就是在报这个真实值；<b>②</b> 运行期间会持续覆盖 health 的 <code>gest_*</code> 遥测（它只记「最近一次手势」），做手势净位移对账前请<b>先关闭</b>。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>键盘输入</h2>
+    <div class="grid g4" style="margin-bottom:10px;">
+      <button class="sec" onclick="sendKey('HOME')">HOME</button>
+      <button class="sec" onclick="sendKey('BACK')">BACK</button>
+      <button class="sec" onclick="sendKey('VOL_UP')">VOL+</button>
+      <button class="sec" onclick="sendKey('VOL_DOWN')">VOL−</button>
+      <button class="sec" onclick="sendKey('MUTE')">MUTE</button>
+      <button class="sec" onclick="sendKey('PLAY_PAUSE')">播放/暂停</button>
+      <button class="sec" onclick="sendKey('ENTER')">ENTER</button>
+      <button class="sec" onclick="sendKey('ESC')">ESC</button>
+    </div>
+    <div class="grid g4" style="margin-bottom:10px;">
+      <button class="sec" onclick="sendKey('UP')" aria-label="上">↑</button>
+      <button class="sec" onclick="sendKey('DOWN')" aria-label="下">↓</button>
+      <button class="sec" onclick="sendKey('LEFT')" aria-label="左">←</button>
+      <button class="sec" onclick="sendKey('RIGHT')" aria-label="右">→</button>
+      <button class="sec" onclick="sendKey('SPACE')" aria-label="空格">空格</button>
+      <button class="sec" onclick="sendKey('TAB')" aria-label="Tab">TAB</button>
+      <button class="sec" onclick="sendKey('BACKSPACE')" aria-label="退格">⌫ 退格</button>
+      <button class="sec" onclick="sendKey('DELETE')" aria-label="Delete">Delete</button>
+    </div>
+    <div class="hint">方向键/空格/TAB/退格走<code>键盘</code>（Report ID 2），HOME/BACK/VOL±/MUTE/播放走 <code>Consumer Control</code>（Report ID 3）；字母数字用下方文本框逐字符发送。与手势共用串行队列，不互相插帧。</div>
+  </div>
+
+  <div class="card">
+    <h2>发送文本</h2>
+    <label>ASCII 文本（逐字符发送，Report ID 2）</label>
+    <div class="grid g2">
+      <input id="txt" type="text" placeholder="hello 123"
+             style="padding:10px;border-radius:10px;border:0;background:#2b3650;color:#fff;font-size:15px;">
+      <button onclick="sendText()">发送文本</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>手势回放（原生 BLE 速度）</h2>
+    <div class="grid g2" style="margin-bottom:12px;">
+      <div><label>形状</label>
+        <select id="gtype">
+          <option value="box">方框 Box</option>
+          <option value="line">直线 Line</option>
+          <option value="circle">圆 Circle</option>
+        </select>
+      </div>
+      <div><label>段数 steps：<span class="val" id="stepsv">12</span></label>
+        <input type="range" id="steps" min="1" max="60" value="12" oninput="document.getElementById('stepsv').textContent=this.value"></div>
+      <div><label>间隔 step_ms：<span class="val" id="msv">90</span></label>
+        <input type="range" id="ms" min="10" max="500" value="90" oninput="document.getElementById('msv').textContent=this.value"></div>
+      <div style="display:flex;align-items:flex-end;">
+        <button style="width:100%" onclick="playGesture()">▶ 播放手势</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>响应日志</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2>设备配置</h2>
+    <div class="adj-ctl"><label>BLE 设备名</label><input type="text" id="cfgBleName" maxlength="31" placeholder="Qshou"></div>
+    <div class="adj-ctl"><label>VID</label><input type="text" id="cfgVid" placeholder="0x303A" size="8"><span class="hint">0x 十六进制或十进制</span></div>
+    <div class="adj-ctl"><label>PID</label><input type="text" id="cfgPid" placeholder="0x0001" size="8"></div>
+    <div class="adj-ctl"><label>默认分辨率</label>
+      <select id="cfgRes">
+        <option value="6">QVGA 320×240</option>
+        <option value="9">480×320</option>
+        <option value="10">VGA 640×480</option>
+        <option value="11">SVGA 800×600</option>
+        <option value="12">XGA 1024×768</option>
+        <option value="13">720p 1280×720</option>
+        <option value="15">UXGA 1600×1200</option>
+        <option value="16">1080p 1920×1080（需 OV5640）</option>
+      </select>
+    </div>
+    <div class="adj-ctl"><label>JPEG 质量</label><input type="range" id="cfgQuality" min="0" max="63" step="1" value="16"><span class="v" id="cfgQualityV">16</span></div>
+    <div class="hint">BLE 名 / VID / PID / 分辨率 / 质量改后<b>保存并重启冷生效</b>；分辨率与质量亦可在「画面调节」运行时热切换。</div>
+  </div>
+
+  <div class="card">
+    <h2>网络配置</h2>
+    <div class="adj-ctl"><label>mDNS 主机</label><input type="text" id="cfgMdns" maxlength="31" placeholder="qshou-0a0c"></div>
+    <div class="adj-ctl"><label>WiFi SSID</label><input type="text" id="cfgWifiSsid" maxlength="63"></div>
+    <div class="adj-ctl"><label>WiFi 密码</label><input type="password" id="cfgWifiPass" maxlength="63" placeholder="留空=不改"></div>
+    <div class="adj-ctl"><label>RESP_CAP</label><input type="range" id="cfgRespCap" min="1024" max="8192" step="256" value="2048"><span class="v" id="cfgRespCapV">2048</span></div>
+    <div class="adj-ctl"><label>max_uri</label><input type="number" id="cfgMaxUri" min="13" max="32" step="1" value="16"><span class="v" id="cfgMaxUriV">16</span></div>
+    <div class="adj-ctl"><label>&nbsp;</label><button class="sec" id="cfgSaveBtn">保存并重启</button><span class="v" id="cfgStatus"></span></div>
+    <div class="hint">WiFi 写入 NVS 命名空间 qshou（与 BLE 绑定分开，不丢配对）；RESP_CAP / max_uri 为 HTTP 内部参数，已<b>硬钳制</b>（1024–8192 / 13–32）。保存后设备重启生效。</div>
+  </div>
+
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+// JS 侧对光标的粗略估算（仅用于日志显示）。
+let vx = 0, vy = 0;
+const clampHid = v => Math.max(0, Math.min(65535, v|0));
+
+function log(msg, cls){
+  const d = document.createElement('div');
+  d.className = 'ln ' + (cls || 'info');
+  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  const l = $('log'); l.appendChild(d); l.scrollTop = l.scrollHeight;
+}
+// 5 字节绝对契约: [state, Xh, Xl, Yh, Yl]（坐标范围 [0,65535]，大端）。
+// 负坐标会被 16 位无符号回绕（-200 → 65336）→ 光标朝反方向狂奔，故先夹紧。
+function pack(x, y){
+  x = clampHid(x); y = clampHid(y);
+  return [0, (x>>8)&0xff, x&0xff, (y>>8)&0xff, y&0xff];
+}
+async function api(path, body){
+  try{
+    const opt = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {method:'GET'};
+    const r = await fetch(path, opt);
+    const t = await r.text();
+    return {ok:r.ok, status:r.status, text:t};
+  }catch(e){ return {ok:false, status:0, text:String(e)}; }
+}
+async function refreshHealth(){
+  const res = await api('/api/v1/health');
+  if(!res.ok){ log('health 失败: '+res.status, 'err'); return; }
+  let j; try{ j = JSON.parse(res.text); }catch(e){ log('health 解析失败', 'err'); return; }
+  $('rssi').textContent  = (j.wifi_rssi!=null ? j.wifi_rssi+' dBm' : '–');
+  $('uptime').textContent= (j.uptime_s!=null ? j.uptime_s+' s' : '–');
+  $('heap').textContent  = (j.free_heap!=null ? (j.free_heap/1024|0)+' KiB' : '–');
+  $('frame').textContent = (j.last_frame_ms!=null ? j.last_frame_ms+' ms前' : '–');
+  $('reset').textContent = j.reset_reason || '–';
+  const b = $('ble');
+  if(j.ble_connected){ b.textContent='已连接'; b.className='pill on'; }
+  else { b.textContent='未连接'; b.className='pill off'; }
+  const g = $('gest');
+  if(j.gest_frames){
+    const jit = j.gest_jit_avg ? ' · 节奏 '+j.gest_jit_min+'/'+j.gest_jit_avg+'/'+j.gest_jit_max+'ms' : '';
+    const dp  = j.gest_drop ? ' · 丢帧 '+j.gest_drop+'/'+j.gest_frames : '';
+    g.textContent = j.gest_frames+' 帧 · 净('+j.gest_dx+','+j.gest_dy+')'+jit+dp;
+    g.style.color = j.gest_drop ? 'var(--bad)'
+                  : ((j.gest_dx===0 && j.gest_dy===0) ? 'var(--ok)' : 'var(--warn)');
+    const spread = j.gest_jit_max - j.gest_jit_min;
+    g.title = '丢帧 > 0 → 「点距不一致」的直接原因（丢一帧，该处点距翻倍）。\n'
+            + '净位移非 0 → 固件几何/帧序列有问题。\n'
+            + '帧节奏 min/avg/max 应接近 step_ms 且离散很小（FREERTOS_HZ=1000 下 ±1~2ms）；\n'
+            + '离散大（当前 ' + spread + 'ms）说明 notify 被 BLE 连接间隔量化 → 需调连接参数。';
+  } else { g.textContent='–'; g.style.color=''; }
+}
+/* 设备信息面板：渲染 /api/v1/sysinfo。
+ *
+ * 🔴 字段口径（与 shared/api_schema.yaml 同步，改名要两边一起改）：
+ *    - NVS 是「条目制」，字节数一律是估算（字段带 _est 后缀），
+ *      面板同时给出条目数与分区真实容量，不做混淆；
+ *    - tasks 只报 stack_free（历史最小剩余），**没有 stack_size** ——
+ *      固件未开 configUSE_TRACE_FACILITY，拿不到栈容量。
+ *      故危险阈值只能用绝对字节数，不能算百分比。 */
+function fmtBytes(b){
+  if(b==null) return '–';
+  if(b>=1048576) return (b/1048576).toFixed(1)+' MB';
+  if(b>=1024)    return (b/1024).toFixed(1)+' KiB';
+  return b+' B';
+}
+async function refreshSysinfo(){
+  const res = await api('/api/v1/sysinfo');
+  if(!res.ok){ $('siNvs').textContent='读取失败 ('+res.status+')'; return; }
+  let j; try{ j = JSON.parse(res.text); }
+  catch(e){ $('siNvs').textContent='响应解析失败'; return; }
+
+  const nvs = j.nvs||{}, mem = j.mem||{};
+  $('siNvs').textContent = nvs.valid
+    ? ('条目 '+(nvs.used_entries||0)+'/'+(nvs.total_entries||0)
+       +' · 约 '+fmtBytes(nvs.used_bytes_est)+'（分区 '+fmtBytes(nvs.part_size)+'）')
+    : '分区不可读';
+
+  const he = $('siHeap');
+  he.textContent = fmtBytes(mem.heap_free)+' / 最低 '+fmtBytes(mem.heap_min_free)
+                 + ' / '+fmtBytes(mem.internal_total);
+  /* 内部堆是真正的稀缺资源（WiFi/BLE/DMA 缓冲都从这里分配）。留量 <32KiB 标橙、
+     <16KiB 标红——注意不能拿 health.free_heap（含 PSRAM，7~8MB）来判断余量，
+     那个数字大到永远看不出危险。 */
+  he.style.color = (mem.heap_free < 16384) ? 'var(--bad)'
+                 : (mem.heap_free < 32768) ? 'var(--warn)' : '';
+  /* PSRAM 余量低于 15% 时标橙——相机帧缓冲正在用它，掉到这个水位就要担心 JPEG 分配失败 */
+  const psPct = mem.psram_total ? (mem.psram_free/mem.psram_total) : 1;
+  const pe = $('siPsram');
+  pe.textContent = mem.psram_total
+    ? (fmtBytes(mem.psram_free)+' / '+fmtBytes(mem.psram_total)+' ('+Math.round(psPct*100)+'%)')
+    : '未启用';
+  pe.style.color = (mem.psram_total && psPct < 0.15) ? 'var(--warn)' : '';
+
+  const parts = j.partitions||[];
+  $('siParts').textContent = parts.length
+    ? parts.map(p=>p.label+' '+fmtBytes(p.size)+(p.mounted?'':'（未挂载）')).join('  ·  ')
+    : '–';
+
+  /* 阈值是绝对字节数：<1KiB 橙（该任务接近爆栈），<512B 红 */
+  const tasks = j.tasks||[];
+  const te = $('siTasks');
+  if(tasks.length){
+    te.innerHTML = tasks.map(t=>{
+      const col = t.stack_free<512 ? 'var(--bad)' : (t.stack_free<1024 ? 'var(--warn)' : 'var(--ok)');
+      return '<span style="color:'+col+'">'+t.name+' 剩余 '+fmtBytes(t.stack_free)+'</span>';
+    }).join('　');
+  } else { te.textContent='未查到关注的任务'; }
+}
+/* 手势播完后自动回读一次净位移：把「设备算得对不对」变成可见数字，
+ * 不必再靠肉眼猜。box/circle 应为 (0,0)；dir 应为所请求的距离。 */
+function scheduleGestureReadback(type, steps, step_ms){
+  const frames = (type==='line') ? (steps+2) : (4*steps+2);
+  const wait = frames*step_ms + 700;
+  setTimeout(refreshHealth, wait);
+  return wait;
+}
+async function playGesture(){
+  const type = $('gtype').value;
+  const steps = +$('steps').value, step_ms = +$('ms').value;
+  log('▶ gesture '+type+' steps='+steps+' step_ms='+step_ms);
+  const res = await api('/api/v1/gesture', {type, steps, step_ms});
+  if(res.status===503){ log('✗ 设备正忙：上一串还没播完（已串行化，绝不并发），请稍候重试', 'err'); return; }
+  if(!res.ok){ log('✗ ['+res.status+'] '+res.text, 'err'); return; }
+  log('✓ '+res.text, 'ok');
+  const w = scheduleGestureReadback(type, steps, step_ms);
+  log('⏳ 约 '+(w/1000).toFixed(1)+'s 播完，届时自动回读净位移…', 'info');
+}
+// 原地点击：专用 tap 类型，用 1px 净零抖动锚定按下（规避安卓丢弃零位移 down/up）。
+async function tapInPlace(){
+  log('● tap in place (type=tap)');
+  const r = await api('/api/v1/gesture', {type:'tap', step_ms:80});
+  if(r.status===503){ log('✗ 设备正忙，稍候重试', 'err'); return; }
+  if(r.ok) log('✓ '+r.text, 'ok'); else log('✗ ['+r.status+'] '+r.text, 'err');
+  setTimeout(refreshHealth, 1200);
+}
+// 四向移动：下发相对增量（UI 像素，与「画方框」同一条链路）。纯移动（press=0），
+// 不按任何键 —— 只让光标滑动到目标，点击交给上方「点击」按钮。
+async function moveDir(d){
+  const dist = +$('dist').value || 120;
+  let dx = 0, dy = 0;
+  if(d==='right')     dx =  dist;
+  else if(d==='left') dx = -dist;
+  else if(d==='down') dy =  dist;
+  else if(d==='up')   dy = -dist;
+  const steps = +$('steps').value, step_ms = +$('ms').value;
+  vx = clampHid(vx + dx); vy = clampHid(vy + dy);   // 仅供日志显示
+  log('↔ move '+d+' '+dist+'px  (dx='+dx+', dy='+dy+', steps='+steps+')');
+  const r = await api('/api/v1/gesture', {type:'dir', dx, dy, steps, step_ms, press:0});
+  if(r.status===503){ log('✗ 设备正忙：上一串还没播完（已串行化，绝不并发），请稍候重试', 'err'); return; }
+  if(r.ok) log('✓ '+r.text, 'ok'); else log('✗ ['+r.status+'] '+r.text, 'err');
+  setTimeout(refreshHealth, (steps+2)*step_ms + 700);
+}
+/* ── 防休眠（keep-awake）───────────────────────────────────────────────
+ * 每 N 秒下发一次「净零抖动」：dx=+1 走一帧、间隔 150ms 再 dx=−1 走一帧，
+ * 一正一反净位移为 0 —— 光标原地踏步，但对方系统判定为「有输入」从而不休眠。
+ *
+ * ⚠️ 四个必须知道的点（都是踩过或差点踩的坑）：
+ *   1) 用 **dir 而不是 tap**：tap 会真的按下再抬起，落到被控 UI 上就是一次
+ *      **点击**，可能误触按钮/链接；抖动只要「移动」，不能产生点击。
+ *   2) **503 = 上一串还没播完**，此时**跳过本次**、下个周期自然重试。
+ *      ⛔ 绝不重发：手势已送达与否无法判定，重发会造成多走一段 → 永久失同步。
+ *      也不要缩小周期去补偿，那只会让队列更挤。
+ *   3) ⚠️ health 的 gest_dx/dy 只记录**最近一次手势**且每次覆盖写，所以开启
+ *      后遥测会被抖动持续覆盖。验证别的手势前必须先关掉本功能。
+ *   4) 🔴 **绝不允许两轮抖动同时在飞**。下一轮**不是在到点时排班，而是等本轮
+ *      真正跑完**才排（触发瞬间把 kaDue 置 Infinity，finally 里按「计划起点 +
+ *      间隔」回写；若已落到过去则钳到此刻）。
+ *      为什么必须这样：一轮抖动 = 两次 POST /api/v1/gesture，若用固定周期
+ *      setInterval 硬排，设备一慢就会出现「上下两轮重叠」→ 并发堆积 → 打爆
+ *      httpd 的 lwIP socket fd（`httpd_accept_conn: error in accept (23)` ENFILE，
+ *      实测会连 health 都连不上，只能复位设备恢复，见 2026-10-02 事故）。
+ *      代价：设 0.3s 而设备往返要 0.6s 时，实际只能做到 0.6s —— **这是有意的**，
+ *      宁可慢也不能把设备打挂，pill 上直接显示实测周期，不谎报。
+ *      （另有一处 100ms 级的量化：发车靠 kaStep 心跳轮询，故实际周期会向上取整
+ *      到下一个心跳tick；只在「设备比设定慢」的退化模式下才看得出来。）
+ * 另：kaJiggle 内部还有 kaBusy 兜底互斥，与外部排班构成双保险。
+ *      回位那一腿失败时**不重试**（送达与否不可判定，重发可能多走），改为累计到
+ *      kaDrift 并在 pill 上如实显示 —— 高频下这一点点残差会被放大，必须让用户看见。 */
+const KA_JITTER = 1;                   // 抖动幅度 px（± 配对净零）
+const KA_GAP    = 150;                 // 一正一反之间的间隔 ms
+const KA_MIN    = 0.3, KA_MAX = 300;   // 可调范围（秒），对数滑块的端点
+let kaTick = null, kaDue = 0, kaBusy = false, kaLastMs = 0, kaLogAt = 0, kaDrift = 0;
+
+/* 滑块取**对数刻度**：整数位置 0..1000 ↔ 0.3s..300s。
+   为何不用线性：0.3~5s 在线性滑块上只占 1.6% 行程，手根本拖不准。
+   反过来对数刻度下全程 1‰ 步长 ≈ 0.7% 变化，低区手感均匀。
+   再按量级做阶梯吸附，免得出现 17.34s 这种记不住的值。 */
+function kaRawToSec(v){ return KA_MIN * Math.pow(KA_MAX / KA_MIN, (+v || 0) / 1000); }
+function kaSecToRaw(s){ return Math.round(1000 * Math.log(s / KA_MIN) / Math.log(KA_MAX / KA_MIN)); }
+function kaSecSnap(s){
+  s = Math.min(KA_MAX, Math.max(KA_MIN, s || KA_MIN));
+  if(s < 1)  return Math.round(s * 10) / 10;   // 0.3 ~ 0.9
+  if(s < 10) return Math.round(s * 2) / 2;     // 1 ~ 9.5
+  if(s < 60) return Math.round(s);             // 10 ~ 59
+  return Math.round(s / 5) * 5;                // 60 ~ 300
+}
+function kaSec(){ return kaSecSnap(kaRawToSec(+$('kaSec').value)); }
+function kaFmt(s){ return (s < 10 ? Math.round(s * 10) / 10 : Math.round(s)) + 's'; }
+function kaRender(){
+  const on = !!kaTick, sec = kaSec();
+  $('kaBtn').textContent = on ? '防休眠：运行中' : '防休眠：已停止';
+  $('kaBtn').classList.toggle('on', on);
+  $('kaState').textContent = on
+    ? ('每 ' + kaFmt(sec) + (kaLastMs ? ' · 实 ' + (kaLastMs / 1000).toFixed(2) + 's' : '')
+       + (kaDrift ? ' · 未回位 +' + kaDrift + 'px' : ''))
+    : '未启用';
+  $('kaState').className = 'pill ' + (on ? 'on' : 'off');
+  if(kaBusy)          $('kaNext').textContent = '抖动中…';
+  else if(!on)        $('kaNext').textContent = '–';
+  else{
+    const left = Math.max(0, (kaDue - Date.now()) / 1000);
+    $('kaNext').textContent = left < 10 ? left.toFixed(1) + 's' : Math.round(left) + 's';
+  }
+}
+async function kaJiggle(){
+  if(kaBusy) return;                   // 互斥：上一轮还没走完就不再发
+  kaBusy = true;
+  const t0 = Date.now();
+  try{
+    const r1 = await api('/api/v1/gesture', {type:'dir', dx:KA_JITTER, dy:0, steps:1, step_ms:15, press:0});
+    if(r1.status === 503){ log('防休眠：设备忙，本轮跳过（下周期自动重试）', 'err'); return; }
+    if(!r1.ok){ log('防休眠失败 [' + r1.status + '] ' + r1.text, 'err'); return; }
+    await new Promise(r => setTimeout(r, KA_GAP));
+    const r2 = await api('/api/v1/gesture', {type:'dir', dx:-KA_JITTER, dy:0, steps:1, step_ms:15, press:0});
+    if(!r2.ok){
+      // ⛔ 不重试（送达与否不可判定，重发等于多走一帧）；如实记账让用户看见。
+      kaDrift += KA_JITTER;
+      log('防休眠回位失败 [' + r2.status + '] → 累计未回位 +' + kaDrift + 'px', 'err');
+    }
+    else if(Date.now() - kaLogAt > 3000){   // 高频时成功日志最多 3s 一条，别刷屏
+      kaLogAt = Date.now();
+      log('防休眠抖动 ✓  ±' + KA_JITTER + 'px 净零', 'ok');
+    }
+  } finally {
+    kaLastMs = Date.now() - t0;        // 实测一轮耗时 —— 给用户看真实周期
+    kaBusy = false;
+  }
+}
+function kaStep(){
+  if(!kaTick) return;
+  if(!kaBusy && Date.now() >= kaDue){
+    const startAt = isFinite(kaDue) ? kaDue : Date.now();   // 本轮的「计划起点」
+    kaDue = Infinity;                  // 本轮在飞期间不再触发（防并发堆积）
+    kaJiggle().catch(()=>{}).finally(()=>{
+      if(!kaTick) return;
+      // 下一轮排在**计划起点 + 间隔**，而不是"此刻 + 间隔"：
+      // 快设备 → 周期严格等于设定值；慢设备（往返 > 间隔）→ 落在过去，钳到此刻，
+      // 既不补帧也不堆积。总之周期 = max(设定值, 一轮往返)。
+      kaDue = Math.max(startAt + kaSec() * 1000, Date.now());
+    });
+  }
+  kaRender();
+}
+function toggleKeepAwake(){
+  if(kaTick){ clearInterval(kaTick); kaTick = null; kaDue = 0; kaLastMs = 0; kaDrift = 0; log('防休眠：已停止', 'info'); }
+  else{
+    kaDue = Date.now();                // 立刻走第一轮
+    kaTick = setInterval(kaStep, 100); // 100ms 心跳只负责倒计时刷新，排班由 kaJiggle 完成后决定
+    log('防休眠：已启动，目标每 ' + kaFmt(kaSec()) + ' 抖动 ±' + KA_JITTER + 'px（净零）', 'ok');
+  }
+  kaRender();
+}
+if($('kaSec')){
+  const kaSync = ()=>{ $('kaSecv').textContent = kaFmt(kaSec()); kaRender(); };
+  $('kaSec').addEventListener('input', kaSync);
+  kaSync();                            // 初始化：把对数滑块的初始位置换算回秒显示
+}
+/* ── 键盘 / Consumer Control ──────────────────────────────────────────
+ * 命名键（HOME/BACK/VOL_UP/VOL_DOWN/MUTE/PLAY_PAUSE/ENTER/ESC）或单个 ASCII 字符。
+ * 走 /api/v1/key → 与手势共用的串行队列，不插帧。 */
+async function sendKey(k){
+  log('⌨ key '+k);
+  const r = await api('/api/v1/key', {key:k});
+  if(r.status===503){ log('✗ 设备正忙，稍候重试', 'err'); return; }
+  if(r.ok) log('✓ '+r.text, 'ok'); else log('✗ ['+r.status+'] '+r.text, 'err');
+  setTimeout(refreshHealth, 600);
+}
+async function sendText(){
+  const s = ($('txt').value || '');
+  if(!s){ log('文本为空', 'err'); return; }
+  log('⌨ text "'+s+'" ('+s.length+' chars)');
+  for(const ch of s){
+    const r = await api('/api/v1/key', {key: ch});
+    if(!r.ok){ log('✗ ['+r.status+'] 字符 '+JSON.stringify(ch)+' 失败', 'err'); return; }
+  }
+  log('✓ 文本发送完毕', 'ok');
+  setTimeout(refreshHealth, 800);
+}
+/* ══════════════════════════════════════════════════════════════════════
+   相对推进（虚拟摇杆 + 方向键）—— 与控制器端同款交互，但**直连本机**
+   ──────────────────────────────────────────────────────────────────────
+   🔴 关键差异 1：设备端**没有** /api/v1/atom/*。那是**控制器侧**的 Python
+      层（schema 里 owner=controller），本页面只能直接
+      POST /api/v1/gesture（type=dir / tap）。
+      于是控制器里那套**服务端** latest-wins 合并器在这里并不存在 ——
+      必须在浏览器 JS 里重建等价背压，否则摇杆会疯狂打出 503。
+
+   🔴 关键差异 2：手势回放是**异步**的（固件立刻返回，轨迹在设备侧以原生
+      BLE 速度播），所以 HTTP 200 **不等于**「已经走完了」。
+      设备端的优势是能读到回包里的 steps/step_ms（固件按位移预算**自适应
+      展开**过、step_ms 也可能被下调），据此算出这串手势**播完的时刻**并
+      在此前不再下发 —— 比控制器端只看 HTTP 往返更准，从源头减少 503。
+
+   背压语义（与 controller/atoms.py::MoveCoalescer 对齐）：
+     飞行中最多 1 条 + 待发槽最多 1 条，新 tick **覆盖**旧 tick，永不堆积
+     → 松手即停，不会「松手后光标还在动」。
+
+   🔴 队列深度是 4，不是 1（firmware/platform/esp32/platform_ble.c 的
+      `GEST_QUEUE_LEN`）：播放是串行的（单 worker 顺序消费），但**允许积压
+      最多 4 条**，第 5 条才 503。这正是背压必须做的理由 —— 若放任 tick
+      往队列里灌，松手后设备还会把已积压的几条逐一播完，表现为「松手后
+      光标仍在动」，而且每多积压一条就多错一截。本实现里
+      `flyingUntil` 保证**设备侧最多只有 1 条**（上一串播完才发下一串），
+      连队列的第 2 个槽都不会用到。
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const GEST = '/api/v1/gesture';
+  /* ⚠️ 这份档位表必须与 controller/atoms.py::ATOM_SPEEDS **逐档一致**
+     （step_ms / tick / 默认档）。设备端是静态内嵌 HTML，拿不到 Python 的
+     模板注入，只能硬编码 —— 故
+     tests/test_schema.py::TestDeviceJoystickContract 会交叉校验两侧，
+     改一边不改另一边会直接红。 */
+  const SPEEDS = {
+    fine:   { step_ms:90, tick:200, measured:true  },
+    normal: { step_ms:60, tick:450, measured:false },
+    fast:   { step_ms:15, tick:900, measured:true  }
+  };
+  const DEFAULT_SPEED = 'fine';
+  const STICK_TICK_MS = 70;          // 摇杆产生 tick 的周期
+  const PUMP_MS       = 40;          // 背压泵轮询周期（内部有 flyingUntil 闸，很便宜）
+  /* 🔴 灵敏度总增益（2026-10-03 真机手感：原档位太灵敏，整体降到 20%）。
+     - 为什么做成**独立增益**而不是直接把 SPEEDS 的 tick 改小：SPEEDS 表被
+       tests/test_schema.py::TestDeviceJoystickContract 要求与
+       controller/atoms.py::ATOM_SPEEDS **逐档一致**（改一边另一边就红），
+       且那些 tick 是「真机标定值」，直接抹掉就丢了标定的出处。
+     - 作用点只有一个 tickSize()：摇杆 tick / 方向键单步 / 拖拽累加**全部**
+       自动跟着缩放，不存在「改了摇杆没改方向键」的漏改。
+     - 想恢复原手感把这里改回 1 即可；要再调，只动这一个数。
+     - ⚠️ 只作用于**设备端这一页**；控制器页仍是 100%（若要同步，改这里更省事，
+       但记得它是全局除数，不是「速度更快」）。 */
+  const JOY_GAIN      = 0.20;
+  const DEADZONE      = 0.22;        // 死区（占可移动半径比例）
+  const DPAD_DELAY = 400, DPAD_REPEAT = 90;
+  const ANCHOR_COUNTS = -25000, ANCHOR_STEP_MS = 15, ANCHOR_STEPS = 16;
+  const BUDGET_MAX    = 127 * 200;   // 25400：与固件 GEST_DIR_MAX_TOTAL 对齐
+  const HID_MAX       = 10000;       // 信念画布坐标上限（与控制器端一致）
+  const cl = (v, lo, hi) => (v < lo ? lo : (v > hi ? hi : v));
+
+  let speed = DEFAULT_SPEED, jmode = 'move';
+  let holding = false, sx = 0, sy = 0, accX = 0, accY = 0;
+  /* 背压状态：pending=待发槽（最多 1 条，新覆盖旧）；flyingUntil=预计播完时刻；
+     exclusive=独占期（归零/拖拽/点击），期间泵不得下发。 */
+  let pending = null, flyingUntil = 0, reqInFlight = false, exclusive = false;
+  const cur = { x: 0, y: 0 };        // 本地「信念」光标（仅示意，非真值）
+
+  const stick = $('stick'), knob = $('knob'), mini = $('mini');
+  const mctx = mini ? mini.getContext('2d') : null;
+
+  /* ---------- 回包 → 实际交付 / 播完时长 ---------- */
+  function delivered(p, r){
+    let dx = p.dx | 0, dy = p.dy | 0;
+    /* shortfall=1 表示预算覆盖不了请求位移（回包会 echo 请求值 —— 那是
+       「谎报成功」的老坑），故按 budget 等比缩放，绝不照满额记账。 */
+    if(r && r.shortfall){
+      const b = r.budget | 0, m = Math.max(Math.abs(dx), Math.abs(dy));
+      if(m > 0 && b > 0 && b < m){ const k = b / m; dx = Math.round(dx*k); dy = Math.round(dy*k); }
+    }
+    return { dx: dx, dy: dy };
+  }
+  function playMs(p, r){
+    const st = Number((r && r.steps)   || p.steps   || 4);
+    const ms = Number((r && r.step_ms) || p.step_ms || 90);
+    return st * ms + 120;            // +120ms 余量：BLE 尾部 + HTTP 抖动
+  }
+
+  /* ---------- 信念示意（迷你画布） ---------- */
+  function drawMini(){
+    if(!mctx) return;
+    const W = mini.width, H = mini.height;
+    mctx.clearRect(0, 0, W, H);
+    mctx.strokeStyle = '#2b3650'; mctx.lineWidth = 1;
+    mctx.strokeRect(0.5, 0.5, W-1, H-1);
+    mctx.strokeStyle = '#1d2a3d';
+    mctx.beginPath();
+    mctx.moveTo(W/2, 0); mctx.lineTo(W/2, H);
+    mctx.moveTo(0, H/2); mctx.lineTo(W, H/2);
+    mctx.stroke();
+    const x = cur.x / HID_MAX * (W - 8) + 4, y = cur.y / HID_MAX * (H - 8) + 4;
+    mctx.fillStyle = '#3b82f6';
+    mctx.beginPath(); mctx.arc(x, y, 4, 0, 7); mctx.fill();
+    $('cursorTxt').textContent = '信念 (' + Math.round(cur.x) + ',' + Math.round(cur.y) + ')';
+  }
+  function nudge(dx, dy){
+    cur.x = cl(cur.x + dx, 0, HID_MAX);
+    cur.y = cl(cur.y + dy, 0, HID_MAX);
+    drawMini();
+  }
+
+  /* ---------- 背压泵：唯一的发送入口 ---------- */
+  function submitMove(p){ pending = p; }          // 非阻塞；覆盖旧 tick
+  async function pump(){
+    if(exclusive || reqInFlight) return;
+    if(Date.now() < flyingUntil) return;          // 上一串还在设备侧播
+    if(!pending) return;
+    const p = pending; pending = null;
+    reqInFlight = true;
+    let hold = 0, r = null;
+    try{
+      const res = await api(GEST, p);
+      if(res.status === 503){
+        /* 设备侧队列满（例如刚点了「播放手势」，或上一条还没排空）。
+           保留待发以便重试；**不覆盖**更新的 tick（pending 可能已被新 tick 写入）。 */
+        hold = 250;
+        if(!pending) pending = p;
+        log('… 设备忙(503)，' + hold + 'ms 后重试（串行队列，绝不并发）', 'info');
+        return;
+      }
+      try{ r = JSON.parse(res.text); }catch(e){ r = null; }
+      if(!res.ok){ log('✗ 摇杆 [' + res.status + '] ' + res.text, 'err'); return; }
+      const d = delivered(p, r);
+      nudge(d.dx, d.dy);
+      log('摇杆 dx=' + d.dx + ' dy=' + d.dy
+          + ' · 实际 ' + (r && r.steps) + '帧×' + (r && r.step_ms) + 'ms'
+          + (r && r.shortfall ? '  ⚠ 预算不足(shortfall)' : '')
+          + ' · 信念(' + Math.round(cur.x) + ',' + Math.round(cur.y) + ')', 'ok');
+    }catch(e){
+      log('✗ 摇杆异常 ' + e, 'err');
+    }finally{
+      reqInFlight = false;
+      flyingUntil = Date.now() + (hold || playMs(p, r));
+    }
+  }
+
+  /* ---------- 速度档 / 模式 ---------- */
+  const speedSeg = $('speedSeg');
+  Object.keys(SPEEDS).forEach(k=>{
+    const b = document.createElement('button');
+    b.dataset.speed = k;
+    b.textContent = k + (SPEEDS[k].measured ? '' : '?');
+    if(k === speed) b.classList.add('on');
+    // ⚠️ tooltip 必须报**增益后**的实发值 —— 报标定原值等于骗人（所见≠所得）
+    b.title = 'step_ms=' + SPEEDS[k].step_ms + '，每 tick '
+            + Math.round(SPEEDS[k].tick * JOY_GAIN) + ' counts（标定原值 '
+            + SPEEDS[k].tick + ' ×灵敏度 ' + JOY_GAIN + '）'
+            + (SPEEDS[k].measured ? '（已真机标定增益）' : '（未标定，插值占位；带 ? 表示此意）');
+    b.onclick = ()=>{ speed = k;
+      [...speedSeg.children].forEach(x=>x.classList.toggle('on', x.dataset.speed === k)); };
+    speedSeg.appendChild(b);
+  });
+  $('modeSeg').onclick = e=>{
+    const b = e.target.closest('button[data-mode]'); if(!b) return;
+    jmode = b.dataset.mode;
+    [...b.parentNode.children].forEach(x=>x.classList.toggle('on', x === b));
+    $('modeHint').textContent = (jmode === 'move')
+      ? '按住摇杆连续移动（latest-wins 背压，松手即停）'
+      : '按住摇杆累加位移，松手一次性提交（整段拖拽）';
+  };
+
+  /* ---------- 摇杆几何 ---------- */
+  const knobR = 22;                                   // 旋钮半径（与 CSS 44px 对应）
+  function stickR(){ return stick.getBoundingClientRect().width / 2 - knobR; }
+  function setKnob(x, y){
+    knob.style.transform = 'translate(calc(-50% + ' + x + 'px), calc(-50% + ' + y + 'px))';
+  }
+  function stickPos(ev){
+    const r = stick.getBoundingClientRect();
+    let x = ev.clientX - (r.left + r.width/2), y = ev.clientY - (r.top + r.height/2);
+    const m = Math.hypot(x, y), R = stickR();
+    if(m > R){ x = x/m*R; y = y/m*R; }
+    return [x, y];
+  }
+  /* 单 tick 的实际 counts = 标定档位值 × JOY_GAIN。这里是**唯一的作用点**：
+     摇杆 tick(70ms/拍)、方向键单步、拖拽累加都从这里取值。 */
+  function tickSize(){
+    const base = (SPEEDS[speed] || SPEEDS[DEFAULT_SPEED]).tick;
+    return Math.max(1, Math.round(base * JOY_GAIN));   // 下限 1：增益极小时别退化成不动
+  }
+  function vec(){
+    const m = Math.hypot(sx, sy), R = stickR();
+    if(m < R*DEADZONE) return null;                   // 死区
+    const t = tickSize();
+    return { dx: Math.round(sx/m*t), dy: Math.round(sy/m*t) };
+  }
+
+  /* ---------- tick 生产（70ms 一拍，仅按住时） ---------- */
+  function produceTick(){
+    const v = vec();
+    if(!v){
+      /* 摇杆回中 → 撤销待发 tick（比控制器端更进一步：控制器会让旧待发
+         多走一步，这里「回中即停」）。飞行中的那一条无法撤销（固件已收）。 */
+      if(jmode === 'move') pending = null;
+      return;
+    }
+    if(jmode === 'drag'){ accX += v.dx; accY += v.dy; return; }
+    submitMove({ type:'dir', dx: v.dx, dy: v.dy, steps: 4,
+                 step_ms: SPEEDS[speed].step_ms, press: 0 });
+  }
+
+  /* ---------- 独占操作（归零 / 拖拽 / 点击）：先排空，再独占 ---------- */
+  function waitIdle(timeout){
+    const t0 = Date.now(), lim = timeout || 3000;
+    return new Promise(res=>{
+      const t = setInterval(()=>{
+        /* 必须带超时：否则一次请求卡死会让独占门闩永久立着 → 整个摇杆失灵 */
+        if(!reqInFlight || Date.now() - t0 > lim){ clearInterval(t); res(); }
+      }, 20);
+    });
+  }
+  async function exclusivePost(payload, label){
+    exclusive = true;                // 立起门闩：泵不再下发，避免插帧
+    try{
+      await waitIdle();
+      pending = null;                // 丢弃待发（否则「点了之后又漂移」）
+      const res = await api(GEST, payload);
+      if(res.status === 503){ log('✗ ' + label + '：设备忙（上一串还没播完），稍候重试', 'err'); return null; }
+      let r = null; try{ r = JSON.parse(res.text); }catch(e){}
+      if(!res.ok){ log('✗ ' + label + ' [' + res.status + '] ' + res.text, 'err'); return null; }
+      flyingUntil = Date.now() + playMs(payload, r);
+      return r;
+    }catch(e){
+      log('✗ ' + label + '异常 ' + e, 'err'); return null;
+    }finally{
+      exclusive = false;
+    }
+  }
+
+ /* ---------- 事件绑定 ---------- */
+  stick.addEventListener('pointerdown', e=>{
+    if(exclusive) return;
+    stick.setPointerCapture(e.pointerId);
+    holding = true; accX = 0; accY = 0;
+    const [x, y] = stickPos(e); sx = x; sy = y; setKnob(x, y);
+  });
+  stick.addEventListener('pointermove', e=>{
+    if(!holding) return;
+    const [x, y] = stickPos(e); sx = x; sy = y; setKnob(x, y);
+  });
+  async function stickUp(){
+    if(!holding) return;
+    holding = false;
+    setKnob(0, 0); sx = sy = 0;
+    pending = null;                  // 松手即停：丢弃待发（在飞的那条无法撤销）
+    if(jmode === 'drag' && (accX || accY)){
+      const ax = cl(accX, -BUDGET_MAX, BUDGET_MAX);
+      const ay = cl(accY, -BUDGET_MAX, BUDGET_MAX);
+      log('拖拽提交 (' + ax + ',' + ay + ') → 按下→移动→抬起（整段原子手势）', 'info');
+      const r = await exclusivePost({ type:'dir', dx: ax, dy: ay, steps: 4,
+                                      step_ms: SPEEDS[speed].step_ms, press: 1 }, '拖拽');
+      if(r){
+        const d = delivered({ dx: ax, dy: ay }, r);
+        nudge(d.dx, d.dy);
+        log('✓ 拖拽实交 (' + d.dx + ',' + d.dy + ')'
+            + (r.shortfall ? '  ⚠ 预算不足，未走满' : ''), r.shortfall ? 'err' : 'ok');
+      }
+      setTimeout(refreshHealth, playMs({steps:4, step_ms:SPEEDS[speed].step_ms}, r) + 300);
+    }
+    accX = accY = 0;
+  }
+  stick.addEventListener('pointerup', stickUp);
+  stick.addEventListener('pointercancel', stickUp);
+
+  let dpadTimer = null, dpadDelay = null;
+  function dpadStep(dx, dy){
+    const t = tickSize();
+    /* 与摇杆共用同一条背压通道 —— 这样「摇杆按住时点方向键」不会打 503 */
+    submitMove({ type:'dir', dx: dx*t, dy: dy*t, steps: 4,
+                 step_ms: SPEEDS[speed].step_ms, press: 0 });
+    log('方向键 (' + (dx*t) + ',' + (dy*t) + ') counts', 'info');
+  }
+  $('dpad').addEventListener('pointerdown', e=>{
+    const b = e.target.closest('button[data-dir]'); if(!b) return;
+    e.preventDefault();
+    const [dx, dy] = b.dataset.dir.split(',').map(Number);
+    dpadStep(dx, dy);
+    dpadDelay = setTimeout(()=>{ dpadTimer = setInterval(()=>dpadStep(dx, dy), DPAD_REPEAT); }, DPAD_DELAY);
+  });
+  function dpadStop(){
+    if(dpadDelay){ clearTimeout(dpadDelay); dpadDelay = null; }
+    if(dpadTimer){ clearInterval(dpadTimer); dpadTimer = null; }
+  }
+  document.addEventListener('pointerup', dpadStop);
+
+  $('dpadClick').onclick = async ()=>{
+    log('● 点击（原地按下/抬起，type=tap）', 'info');
+    const r = await exclusivePost({ type:'tap', step_ms: 80 }, '点击');
+    if(r) log('✓ 点击 ' + JSON.stringify(r), 'ok');
+    setTimeout(refreshHealth, 1200);
+  };
+  $('anchorBtn').onclick = async ()=>{
+    log('归零中…（推向负方向到底，约 3s，请勿重复点击）', 'info');
+    const r = await exclusivePost({ type:'dir', dx: ANCHOR_COUNTS, dy: ANCHOR_COUNTS,
+                                    steps: ANCHOR_STEPS, step_ms: ANCHOR_STEP_MS, press: 0 }, '归零');
+    if(r){
+      cur.x = 0; cur.y = 0; drawMini();       // 信念复位：与 host 钳在左上角对齐
+      log('✓ 归零完成 · 信念复位 (0,0) · 实际 ' + r.steps + '帧×' + r.step_ms + 'ms', 'ok');
+    }
+    setTimeout(refreshHealth, 4000);
+  };
+
+  /* ---------- 常驻驱动：tick 生产 + 背压泵 ----------
+     泵必须是**常驻**的：方向键单击、摇杆回中后到期补发，都依赖它在
+     flyingUntil 到期后把待发槽送出去（否则「点了没反应」）。 */
+  setInterval(()=>{ if(holding) produceTick(); }, STICK_TICK_MS);
+  setInterval(pump, PUMP_MS);
+  drawMini();
+})();
+/* ── 拉取式预览（方案 B）───────────────────────────────────────
+ * 设备相机以 CAMERA_GRAB_LATEST 持续缓存最新帧；前端按用户设定的「刷新率」
+ * 主动 GET /snapshot，拿到 JPEG 后赋给 <img>。每次都是短请求、失败自动重试、
+ * 节奏恒定，天然支持多客户端并发预览，且不独占任何连接。
+ * （固件中 :81/stream 的 MJPEG 推流仍保留，仅供控制器端使用。） */
+let pulling = false;
+let pullToken = 0;
+let pullBusy = false;
+function pullFps(){ return Math.max(1, (+$('pullFps').value) || 15); }
+function togglePull(){
+  pulling = !pulling;
+  if(pulling){
+    $('streambtn').textContent = '⏸ 停止预览';
+    log('▶ 开始拉取预览（' + pullFps() + ' fps）', 'info');
+    pullLoop(++pullToken);
+  } else {
+    pullToken++;                       // 使在途请求失效
+    const im = $('cam');
+    if(im.dataset.blob){ URL.revokeObjectURL(im.dataset.blob); im.dataset.blob = ''; }
+    $('streambtn').textContent = '▶ 开始预览';
+    log('⏸ 停止预览', 'info');
+  }
+}
+function pullLoop(my){
+  if(!pulling || my !== pullToken) return;        // 已停止或被新轮次取代
+  if(pullBusy){ setTimeout(()=>pullLoop(my), 20); return; }
+  pullBusy = true;
+  const t0 = performance.now();
+  fetch('/snapshot?t=' + Date.now())
+    .then(r=>{ if(!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+    .then(b=>{
+      const url = URL.createObjectURL(b);
+      const im = $('cam');
+      const prev = im.dataset.blob || '';
+      im.src = url;
+      im.dataset.blob = url;
+      if(prev) URL.revokeObjectURL(prev);          // 上一张已显示完，释放
+    })
+    .catch(()=>{ /* 网络/相机抖动：靠下方 setTimeout 节奏重试，不刷屏 */ })
+    .finally(()=>{
+      pullBusy = false;
+      if(!pulling || my !== pullToken) return;
+      const wait = Math.max(0, Math.round(1000 / pullFps()) - (performance.now() - t0));
+      setTimeout(()=>pullLoop(my), wait);
+    });
+}
+function snapshot(){
+  if(pulling){ pulling = false; pullToken++; $('streambtn').textContent = '▶ 开始预览'; }
+  $('cam').src = '/snapshot?t=' + Date.now();
+  log('📷 单帧截图 /snapshot（相机未就绪会显示破图 / 503）');
+  setTimeout(refreshHealth, 800);
+}
+refreshHealth();
+refreshSysinfo();
+setInterval(refreshHealth, 3000);
+/* 资源水位变化比状态慢，用 9 秒节奏（与 health 的 3 秒错开，避免同刻并发抢 httpd） */
+setInterval(refreshSysinfo, 9000);
+log('测试台已加载，正在轮询设备状态…', 'info');
+</script>
+<script>
+/* 画面调节：几何（旋转/镜像/放大/翻转 = CSS transform）+ 相机传感器
+ * （曝光/对比度/饱和度 = 真实 /api/v1/camera，失败回退 CSS filter 近似）。
+ * 传感器参数直接改 OV2640，整路推流都生效；故成功时清掉 CSS filter 避免双重叠加。
+ * 设置持久化到 localStorage（按站点独立）。 */
+(function(){
+  const KEY='qshou-cam-adjust-v2';
+  const img=document.getElementById('screen')||document.getElementById('cam');
+  if(!img)return;
+  const container=img.parentElement;
+  const syncs=[...document.querySelectorAll('.cam-adjust-sync')];
+  const els={rot:document.getElementById('adjRot'),mirror:document.getElementById('adjMirror'),
+    flip:document.getElementById('adjFlip'),zoom:document.getElementById('adjZoom'),
+    exp:document.getElementById('adjExp'),
+    con:document.getElementById('adjCon'),    sat:document.getElementById('adjSat'),
+    res:document.getElementById('adjRes'),
+    zoomV:document.getElementById('adjZoomV'),
+    expV:document.getElementById('adjExpV'),conV:document.getElementById('adjConV'),
+    satV:document.getElementById('adjSatV'),reset:document.getElementById('adjReset')};
+  const autoBtns=[...document.querySelectorAll('#camAuto button[data-k]')];
+  const autoAll=document.getElementById('adjAutoAll');
+  if(!els.rot)return;
+  /* zoom 是百分比（100 = 原始），与 rot/mirror/flip 同属**本地预览**变换，
+     不影响推流数据；与曝光等传感器参数无关，故不走 /api/v1/camera。 */
+  let st={rot:0,mirror:false,flip:false,zoom:100,exp:0,con:0,sat:0,
+          autoExp:true,autoWb:true,autoGain:true,res:10};
+  try{const s=JSON.parse(localStorage.getItem(KEY));if(s){
+    if(typeof s.autoExp==='undefined') s.autoExp=(s.exp===0);  // 旧版：滑块0=自动
+    Object.assign(st,s);
+  }}catch(e){}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(st));}catch(e){}}
+  function applyGeom(){
+    const mx=st.mirror?-1:1, my=st.flip?-1:1;
+    const W=container.clientWidth||img.clientWidth, H=container.clientHeight||img.clientHeight;
+    const w=img.clientWidth, h=img.clientHeight;
+    let fit=1;
+    if(st.rot%180!==0 && w && h && W && H){
+      const a=st.rot*Math.PI/180;
+      const bw=Math.abs(w*Math.cos(a))+Math.abs(h*Math.sin(a));
+      const bh=Math.abs(w*Math.sin(a))+Math.abs(h*Math.cos(a));
+      fit=Math.min(W/bw,H/bh,1);
+      if(!isFinite(fit)||fit<=0)fit=1;
+    }
+    /* 放大叠加在 fit 之上：90/270 时 fit 先把画面缩进容器，再按 zoom 放大，
+       溢出部分由容器 overflow:hidden 裁掉（放大=看细节，裁切是预期行为）。 */
+    const z=(st.zoom||100)/100;
+    const t='rotate('+st.rot+'deg) scale('+(fit*mx*z)+','+(fit*my*z)+')';
+    [img,...syncs].forEach(el=>{el.style.transformOrigin='center center';el.style.transform=t;});
+    container.style.overflow='hidden';
+  }
+  function applyFallbackFilter(){
+    const f='brightness('+(1+st.exp/100*0.6)+') contrast('+(1+st.con/100*0.6)+') saturate('+(1+st.sat/100)+')';
+    [img,...syncs].forEach(el=>el.style.filter=f);
+  }
+  function clearFilter(){[img,...syncs].forEach(el=>el.style.filter='');}
+  let sensorTimer=null;
+  async function applySensor(){
+    if(sensorTimer)clearTimeout(sensorTimer);
+    sensorTimer=setTimeout(async()=>{
+      const payload={
+        exposure_auto: st.autoExp?1:0,
+        exposure_value: st.autoExp?0:Math.round(st.exp/100*1200),
+        auto_wb: st.autoWb?1:0,
+        auto_gain: st.autoGain?1:0,
+        contrast: Math.round(st.con/100*2),
+        saturation: Math.round(st.sat/100*2)
+      };
+      try{
+        const r=await fetch('/api/v1/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(r.ok){ clearFilter(); return; }
+      }catch(e){}
+      applyFallbackFilter();   // 旧固件/离线：CSS 近似
+    },150);
+  }
+  /* 分辨率切换：单独走一帧最小请求（只带 frame_size），避免和曝光等传感器参数耦合 ——
+   * 否则每次微调其它参数都会触发 set_framesize 重分配 framebuffer，造成不必要卡顿。
+   * 分辨率没有 CSS 近似回退（它改的是采集端真实分辨率），失败只提示、不动画面。 */
+  async function applyResolution(){
+    try{
+      const r=await fetch('/api/v1/camera',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frame_size: st.res})});
+      if(!r.ok) log('分辨率切换失败（旧固件？）','warn');
+    }catch(e){ log('分辨率切换失败','warn'); }
+  }
+  function syncUI(){
+    [...els.rot.children].forEach(b=>b.classList.toggle('on',+b.dataset.rot===st.rot));
+    els.mirror.checked=st.mirror; els.flip.checked=st.flip;
+    els.exp.value=st.exp; els.con.value=st.con; els.sat.value=st.sat;
+    els.zoom.value=st.zoom; els.zoomV.textContent=st.zoom+'%';
+    if(els.res) els.res.value=String(st.res);
+    els.expV.textContent=(st.exp===0?'自动':st.exp); els.conV.textContent=st.con; els.satV.textContent=st.sat;
+    /* 自动功能开关：每个按钮独立高亮；自动曝光开启时禁用手动曝光滑块 */
+    autoBtns.forEach(b=>b.classList.toggle('on', !!st[b.dataset.k]));
+    if(els.exp) els.exp.disabled = !!st.autoExp;
+    document.querySelectorAll('.adj-step[data-id="adjExp"]').forEach(b=>b.disabled=!!st.autoExp);
+  }
+  els.rot.addEventListener('click',e=>{const b=e.target.closest('button[data-rot]');if(!b)return;st.rot=+b.dataset.rot;syncUI();applyGeom();save();});
+  els.mirror.addEventListener('change',()=>{st.mirror=els.mirror.checked;applyGeom();save();});
+  els.flip.addEventListener('change',()=>{st.flip=els.flip.checked;applyGeom();save();});
+  [['exp',els.exp,els.expV],['con',els.con,els.conV],['sat',els.sat,els.satV]].forEach(([k,el,v])=>{
+    el.addEventListener('input',()=>{st[k]=+el.value; if(k==='exp')v.textContent=(st.exp===0?'自动':st.exp); else v.textContent=el.value; applySensor(); save();});
+  });
+  els.zoom.addEventListener('input',()=>{st.zoom=+els.zoom.value; els.zoomV.textContent=st.zoom+'%'; applyGeom(); save();});
+  if(els.res) els.res.addEventListener('change',()=>{st.res=+els.res.value; syncUI(); applyResolution(); save();});
+  /* 精确微调：每个滑块两侧加 - / + 按钮，按滑块自身 step 递增/递减并夹紧到 [min,max]。
+     放大=本地预览(applyGeom)；曝光/对比度/饱和度=真实传感器(applySensor)。 */
+  function stepParam(id, dir){
+    const map={adjZoom:{k:'zoom',el:els.zoom,apply:applyGeom},
+               adjExp:{k:'exp',el:els.exp,apply:applySensor},
+               adjCon:{k:'con',el:els.con,apply:applySensor},
+               adjSat:{k:'sat',el:els.sat,apply:applySensor}};
+    const m=map[id]; if(!m||!m.el)return;
+    if(m.el.disabled)return;
+    const step=parseFloat(m.el.step)||1;
+    let v=+m.el.value + dir*step;
+    v=Math.max(+m.el.min, Math.min(+m.el.max, v));
+    st[m.k]=v; syncUI(); m.apply(); save();
+  }
+  document.querySelectorAll('.adj-step').forEach(b=>{
+    b.addEventListener('click',()=>stepParam(b.dataset.id, +b.dataset.d));
+  });
+  autoBtns.forEach(b=>b.addEventListener('click',()=>{
+    const k=b.dataset.k; st[k]=!st[k]; syncUI(); applySensor(); save();
+  }));
+  if(autoAll) autoAll.addEventListener('click',()=>{
+    st.autoExp=st.autoWb=st.autoGain=true; syncUI(); applySensor(); save();
+  });
+  els.reset.addEventListener('click',()=>{st={rot:0,mirror:false,flip:false,zoom:100,exp:0,con:0,sat:0,autoExp:true,autoWb:true,autoGain:true,res:10};syncUI();applyGeom();clearFilter();applySensor();applyResolution();save();});
+  window.addEventListener('resize',applyGeom);
+  img.addEventListener('load',applyGeom);
+  syncUI(); applyGeom();
+})();
+</script>
+<script>
+/* 设备配置卡：GET 预填 + 保存并重启（冷生效） */
+(function(){
+  const $ = id => document.getElementById(id);
+  function parseId(v){
+    v = (v||'').trim();
+    if(!v) return 0;
+    if(v.toLowerCase().startsWith('0x')) return parseInt(v.slice(2),16) || 0;
+    return parseInt(v,10) || 0;
+  }
+  async function loadSettings(){
+    try{
+      const r = await fetch('/api/v1/settings');
+      if(!r.ok) return;
+      const j = await r.json();
+      if(j.ble_name!=null) $('cfgBleName').value = j.ble_name;
+      if(j.ble_vid!=null) $('cfgVid').value = '0x'+Number(j.ble_vid).toString(16);
+      if(j.ble_pid!=null) $('cfgPid').value = '0x'+Number(j.ble_pid).toString(16);
+      if(j.mdns_host!=null) $('cfgMdns').value = j.mdns_host;
+      if(j.cam_framesize!=null) $('cfgRes').value = String(j.cam_framesize);
+      if(j.cam_quality!=null){ $('cfgQuality').value=j.cam_quality; $('cfgQualityV').textContent=j.cam_quality; }
+      if(j.wifi_ssid!=null) $('cfgWifiSsid').value = j.wifi_ssid;
+      if(j.http_resp_cap!=null){ $('cfgRespCap').value=j.http_resp_cap; $('cfgRespCapV').textContent=j.http_resp_cap; }
+      if(j.http_max_uri!=null){ $('cfgMaxUri').value=j.http_max_uri; $('cfgMaxUriV').textContent=j.http_max_uri; }
+    }catch(e){}
+  }
+  async function saveSettings(){
+    const body = {
+      ble_name: $('cfgBleName').value.trim(),
+      ble_vid: parseId($('cfgVid').value),
+      ble_pid: parseId($('cfgPid').value),
+      mdns_host: $('cfgMdns').value.trim(),
+      cam_framesize: parseInt($('cfgRes').value,10),
+      cam_quality: parseInt($('cfgQuality').value,10),
+      wifi_ssid: $('cfgWifiSsid').value.trim(),
+      wifi_pass: $('cfgWifiPass').value,
+      http_resp_cap: parseInt($('cfgRespCap').value,10),
+      http_max_uri: parseInt($('cfgMaxUri').value,10)
+    };
+    if(!body.ble_name) delete body.ble_name;
+    if(!body.mdns_host) delete body.mdns_host;
+    if(!body.wifi_ssid) delete body.wifi_ssid;
+    if(!body.wifi_pass) delete body.wifi_pass;   /* 留空=不改密码 */
+    const st = $('cfgStatus');
+    st.textContent = '保存中…';
+    try{
+      const r = await fetch('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r.ok){ st.textContent = '已保存，设备重启中…'; }
+      else { const t = await r.text(); st.textContent = '失败: '+t; }
+    }catch(e){ st.textContent = '请求失败: '+e; }
+  }
+  function init(){
+    const btn = $('cfgSaveBtn');
+    if(btn) btn.addEventListener('click', saveSettings);
+    const rc = $('cfgRespCap');
+    if(rc) rc.addEventListener('input', ()=> $('cfgRespCapV').textContent = rc.value);
+    const mu = $('cfgMaxUri');
+    if(mu) mu.addEventListener('input', ()=> $('cfgMaxUriV').textContent = mu.value);
+    loadSettings();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>

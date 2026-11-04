@@ -1,0 +1,3088 @@
+# ============================================================
+# Y71t Remote KVM-Lite — Project Specification v1.9.2
+# 生成日期: 2026-09-28
+# 最后保存时间: 2026-09-29 12:18:39 +08:00  （约定：每次修改本文件后同步更新此行，并与 project.updated 保持一致）
+# 适用场景: ESP32-S3 + OV2640 摄像头 + BLE HID 远程控制 vivo Y71t
+# 读取说明: 本文件为标准 YAML 1.2，可被任何 AI / 脚本直接解析
+#           所有 key 均为 ASCII snake_case，值中可使用中文
+#
+# v1.8 变更: 【执行策略】确立「跑通第一」为当前唯一优先级：端到端链路打通之前，
+#             任何以降低成本 / 降低开销 / 提高优雅度为目标的方案都不进入实施清单。
+#             新增顶层章节 execution_policy，并把 MVP 传输明确回退为最简单的
+#             **全量中转**：ESP32 主动出站连 broker，视频与指令都经 broker 走 TCP/WebSocket
+#             （完全复用现有 WebSocket 图传 + HTTP API，改动最小、排障最直接）。
+#             v1.7 落地的 P2P 优先 / 三级降级 / UDP 分片 / 打洞成功率测量 / 带宽成本模型
+#             一并挂起到跑通之后（架构结论保留，仅推迟实施）。
+#             注意区分两类事项：上述挂起项是**优化**，可以推迟；
+#             E2E 加密（R20）/ 合规（R19）/ 每设备唯一凭据属**开放前置条件**，不是优化项。
+# v1.9.2 变更: 【进度回填】将 pre_arrival_work 全部 18 个前置项补全 status / artifact / blocked_by 字段：
+#             A1~A8（零硬件核心）全部 done；B 档 B1/B3 生成可操作产物标 partial、B2/B4/B5 标 pending（依赖实物操作）；
+#             C 档 C3/C4/C5 文档已生成标 done、C1/C2 工具链/驱动探测标 partial。
+#             同步新增工程产物：tests/assertions.py（UC1~UC5 断言 + 证据落盘）、docs/{android_prep,
+#             ble_descriptor_review,dependency_licenses,partition_pin_plan}.md、fixtures/calib_grid.png、
+#             tools/gen_calib_grid.py。全量测试 58/58 通过。版本升至 1.9.2。
+# v1.9.1 变更: 【一致性修正，不改动架构决策】将 implementation_order.step_8b 的「先只实现 lan_direct」
+#             与 controller.no_external_server / backend 的 LAN-direct 假设，对齐到 execution_policy
+#             的 MVP「全量中转」（ESP32 出站 → broker，视频+指令经 broker 走 TCP/WebSocket）。
+#             同步修正 shared/api_schema.yaml 注释，将「服务端换算」改为「控制端（Win10）换算」
+#             （与 controller.coordinate_mapper_module.location 一致）。版本升至 1.9.1。
+# v1.9.0 变更: 【工程启动前置】新增 workspace_layout 与 pre_arrival_work 两章，详见 changelog。
+# v1.9 变更: 【工程启动前置】在实物到货前即启动可前置工作，最大化压缩到货后的硬件接触时间。
+#             新增顶层章节 workspace_layout（工程目录规划，分区为 shared / broker / controller /
+#             firmware / tools / tests / fixtures / docs，并定义三条接缝约定：视频源 mock、H 矩阵、指令下发），
+#             与 pre_arrival_work（到货前可前置工作清单，分 A/B/C/D 四档，逐项标注对应
+#             implementation_order 步骤与硬件依赖；D 档为明确不要前置、会返工的项目的）。
+#             两项均服务于「跑通第一」，不进入商业内容。
+# v1.7 变更: 确认并细化传输架构：broker 定位为「信令 + 中继兜底」，数据流 P2P 优先。
+#             核心分流：控制指令（小、必须可靠）始终走 broker；
+#             视频（大、可丢帧）优先 IPv6 直连 › IPv4 打洞 › broker 中继。
+#             新增 broker_service.transport_architecture（会话流程 / UDP 分片量化 /
+#             NAT 现实）。诚实修正 P2P 成功率预期：家宽 CGNAT 下打洞可能失败，
+#             故成本模型需按"部分走中继"建模。新增 R21（打洞成功率）与 R22（UDP 分片丢帧）。
+# v1.6 变更: broker 归属定为「项目方提供」（开箱即用）。由此引入本项目迄今集中度最高的
+#             风险：项目方在技术上可读取所有用户屏幕流并可控制任意设备（R20）。
+#             新增顶层章节 broker_service，规定三条硬前提：E2E 加密（broker 只见密文）/
+#             自托管为一等公民（官方实例是便利而非锁定）/ 成本与合规可持续。
+#             架构上把 broker 由"全量中转"细化为"信令 + 中继兜底"（WebRTC 模型），
+#             同时收敛带宽成本与信任风险。security 新增 threat_actors，R16 上调，新增 R19/R20。
+# v1.5 变更: 【目标变更】项目目标明确为「开源分发 / 大规模异地部署」，不再是自用小规模。
+#             由此在三难困境中明确取舍：放弃「零服务器」，保住「零公网暴露 + 部署友好」。
+#             默认传输路径由 subnet router（lan_direct）改为设备主动出站（outbound_relay），
+#             network.server_required 由 false 改为 conditional；subnet router 降级为可选后端之一。
+#             新增 scalability.selected_path 与 deployment_at_scale_requirements（配网/身份/OTA/
+#             标定平民化/板级适配/许可证六项），并登记 R16-R18。
+# v1.4 变更: 结案 open_questions.Q3 / Q4 / Q5 / Q6 / Q7。至此 Q1-Q7 全部桌面前置结案，
+#            剩余全部为可程式化的真机验证项，不再有阻塞性未知。
+#            Q3 = BLE HID 与 WiFi 共存「原理成立、工程需调」，已固化分工/任务绑核/连接参数配置
+#            Q4 = 息屏不断连（HOGP 走系统蓝牙栈，不受 Doze / App Standby 约束），
+#                 真正风险是触控能否唤醒屏幕，故策略改为「常亮为主 + 定期验证」
+#            Q5 = 官方无旁路供电说明；默认走「窄 SOC 窗口智能插座」而非电池模拟器，
+#                 后者仅作为 Tier-B 备选并附 PMIC 长期风险提示
+#            Q6 = 确认 ESP32 侧无解决方案，必须是同网段的 Tailscale subnet router，
+#                 并补齐 accept-routes 平台不对称、key expiry 静默失效两个必踩坑
+#            Q7 = 【重要纠错】8cm 装不下整屏。标准 66° 镜头竖置需 14-15cm，
+#                 已据此改写 hardware.mounting.camera_distance 并新增 hardware.optics 章节
+#            BOM = 采购清单重写为可直接下单的六组（含 decide_first 待拍板项），
+#                 补回第二颗摄像头 / 5V1A 慢充 / 定时插座 / 刚性悬臂，作废「<¥200」口径
+# v1.3 变更: 结案 open_questions.Q1 / Q2。
+#            Q2 = vivo 官方参数页确认 1080x2400 / 20:9 / AMOLED / OriginOS 1.0；
+#                 并据此新增 coordinate_mapping.frame_coverage（VGA 取景分析）
+#            Q1 = 绝对坐标走「Digitizer 触摸屏」描述符可行（非绝对鼠标），
+#                 逻辑范围 0-10000；library 选型由 asterics(404) 改为
+#                 Autfy/ESP32-BLE-HID（键盘+触控复合 + 与 WiFi 共存）
+# v1.2 变更: 新增 android_prep / hardware.pinout / bom / use_cases /
+#            latency_budget / reliability / security / risk_register /
+#            milestones / naming_conventions / changelog 共 11 个章节；
+#            API 端点统一为 /api/v1/*；implementation_order 扩到 15 步
+# v1.1 变更: 新增 coordinate_mapping 章节与 input.ble_hid.coordinate_mode 决策项
+# ============================================================
+
+project:
+  name: "Y71t Remote KVM-Lite"
+  version: "1.9.2"
+  description: >
+    基于 ESP32-S3 的低成本远程控制方案，通过摄像头拍屏 + BLE HID 输入
+    实现对 vivo Y71t 的异地看屏与点击操作。不依赖 ADB、不装 APP、
+    不要求被控端有视频输出接口。
+    核心工程难点在于三级坐标系（摄像头画面像素 → 屏幕物理像素 → HID 逻辑坐标）
+    的标定与换算，该链路在 MVP 中不可省略。
+  author: "user"
+  created: "2026-09-28"
+  updated: "2026-09-29 12:18:39 +08:00"
+  status: "MVP"
+  current_priority: "跑通第一：先让链路端到端可用，网络与算力开销一律跑通后再优化"
+
+# ------------------------------------------------------------
+# 执行策略 —— 当前阶段的取舍原则与已挂起项
+# ------------------------------------------------------------
+execution_policy:
+  principle: >
+    **跑通第一。** 在端到端链路打通之前，任何以"降低成本 / 降低开销 / 提高优雅度"
+    为目标的方案都不进入实施清单。网络路径优化与算力开销优化统一推迟到跑通之后。
+  rationale: >
+    v1.5-v1.7 连续三轮都在做架构层面的前瞻设计（可插拔传输、P2P 优先、三级降级、
+    UDP 分片、打洞成功率测算）。这些本身成立，但会显著拉长首次跑通的时间，
+    且其中关键的打洞成功率在真实网络下本就测不准 ——
+    在没跑通之前优化一个尚未存在的链路，是本末倒置。
+  decision_date: "2026-09-29"
+  decided_by: "用户"
+
+  mvp_transport_decision:
+    choice: "MVP 采用最简单的全量中转：ESP32 主动出站连 broker，视频与指令都经 broker，走 TCP/WebSocket"
+    why: >
+      完全复用现有 MVP 设计（WebSocket 图传 + HTTP API），改动最小、依赖最少、排障最直接。
+      P2P / 三级降级 / UDP 分片所省的是"规模化的钱"，而规模在跑通之前并不存在。
+    consequence: "MVP 阶段 broker 承载全部流量 —— 这在只有少量测试设备时成本可忽略"
+
+  deferred_until_after_first_run:
+    - item: "P2P 优先与三级降级（IPv6 直连 / IPv4 打洞 / 中继）"
+      parked_from: "broker_service.transport_architecture"
+      reason: "属成本优化，非跑通前提"
+    - item: "UDP 分片与整帧丢弃策略"
+      parked_from: "broker_service.transport_architecture.udp_fragmentation"
+      reason: "是改走 P2P 后才产生的问题，随 P2P 一并推迟"
+    - item: "打洞成功率与中继占比的专项测量"
+      parked_from: "R21"
+      reason: "测的是一个跑通后才存在的链路"
+    - item: "带宽成本模型与免费额度设计"
+      parked_from: "broker_service.economics"
+      reason: "用户规模未知前无法有效建模"
+    - item: "传输层多后端抽象的完整实现"
+      parked_from: "implementation_order.step_8b"
+      reason: "只保留接口与单一后端实现，不实现多后端"
+
+  guardrails:
+    # 说明："先跑通"不等于"什么都不管"。以下三项不阻塞跑通，
+    # 但在官方 broker 承载真实用户之前必须完成 —— 它们是开放的前置条件，不是优化项。
+    # （此处必须是纯列表，不能再混排 mapping key，否则 YAML 解析失败）
+    - item: "端到端加密（R20）"
+      when: "官方 broker 开始承载真实用户之前"
+      note: "MVP 内测阶段可用 TLS + 每设备 token 过渡，但不得对外开放"
+    - item: "合规与运营可持续性（R19）"
+      when: "服务正式对外开放之前"
+      note: "备案、隐私政策、商业模式都属开放前置条件"
+    - item: "每设备唯一凭据"
+      when: "设备数超过手工管理规模之前"
+      note: "单台调试阶段可用人工录入，两台以上就该做"
+
+  re_evaluate_trigger: >
+    当端到端链路已稳定跑通、且出现下列任一情况时，重新启用上述挂起项：
+    broker 带宽成本成为实际支出项 / 用户数增长到中继占比有意义 /
+    或视频延迟在中继路径下不可接受。
+
+# ------------------------------------------------------------
+# 被控端（Y71t）一次性准备清单 —— 不做这些，后续全部无法验证
+# ------------------------------------------------------------
+android_prep:
+  mandatory: true
+  note: "以下设置在 LT 部署前一次性完成，并写入项目 README 以免重复踩坑"
+
+  display:
+    - "开发者选项 → 打开「指针位置」(Pointer location)：用于验证点击落点，是坐标链路的唯一地面真值来源"
+    - "设置 → 显示 → 自动息屏改为「永不」或最长档"
+    - "亮度手动拉满 + 关闭自动亮度/护眼模式（滤蓝光会改变画面色调，影响图像比对基线）"
+    - "关闭深色主题或改为浅色主题：AMOLED 深色界面在摄像头下难以辨识边界"
+
+  bluetooth:
+    checklist:
+      - "蓝牙保持常开，完成与 ESP32 的一次配对"
+      - "OriginOS 电池优化 → 将蓝牙/相关系统服务加入白名单，作为对激进省电策略的保险"
+      - "配对完成后在『已配对设备』里确认该设备归类为输入设备（否则后续 tap 可能无效）"
+
+    screen_off_behavior:
+      status: "RESOLVED (desk) — 息屏不会导致 BLE HID 断连"
+      conclusion: >
+        【Q4 结案】结论是「会保持」。关键在于分清两个层次：
+        BLE 物理连接由独立的蓝牙控制器维持（该控制器有自己的供电域与内存，
+        主机休眠时仍能保活连接并按需唤醒主机，这正是耳机/手表在息屏时不断连的同一套机制）；
+        而 HOGP 输入由 Android 系统蓝牙栈处理，不是某个 App 持有的 GATT 连接。
+        开发者文档里罗列的 Doze / App Standby / 前台服务等后台限制，约束的是
+        App 进程发起的 BLE 操作，与本场景无关——不要被那些文档误导。
+      residual_risks:
+        - "OEM 侧激进省电（OriginOS）：白名单仍是必要保险，虽不再是主因"
+        - "真正未定的不是『连不连得上』，而是『熄屏后 HID 触控能否把屏幕唤醒』：
+           外部键盘按键通常能唤醒，但触控类输入是否可靠触发亮屏因 ROM 而异"
+        - "BLE supervisor timeout：ESP32 侧不要长期静默不发任何包，空闲时也应维持链路"
+      policy: >
+        因此策略维持「屏幕常亮为主」，不去赌息屏唤醒。
+        息屏只作为省电降级手段，且启用前必须跑通下面的验证项。
+      verification_required:
+        - "熄屏 30 分钟后发送一次 HID tap，记录：连接是否还在 / 屏幕是否被唤醒 / tap 是否生效"
+        - "若 (a) 连接断：补串口日志看是 ESP32 侧还是 Y71t 侧发起的断连"
+        - "若 (b) 未唤醒但连接还在：说明触控不触发唤醒，此时必须回退到常亮策略"
+
+  lockdown:
+    - "关闭锁屏密码/指纹，或设为滑动解锁：否则黑屏状态下摄像头看不到内容且无法操作"
+    - "关闭「抬起亮屏 / 双击亮屏」等手势，减少误触发导致的画面抖动"
+
+  long_term_power:
+    risk: "HIGH — 7×24 插电 + 屏幕常亮会同时命中锂电池鼓包与 AMOLED 烧屏两个可靠性陷阱"
+
+    vendor_answer:
+      battery_capacity: "4000mAh 典型值 / 3920mAh 额定值，44W 闪充（vivo 官方参数页，已确认）"
+      bypass_support: "官方页面无任何旁路供电 / 无电池运行的说明 → 按『不支持』处理"
+      note: "不要为了『一次搞定』去赌一个厂商从未承诺的能力"
+
+    chemistry_baseline:
+      soc_window: "长期存放的应力最低点约在 SOC 40-60%；无论充电还是放电，两端都是加速老化区"
+      voltage_stress: "满电停留是高压应力源；峰值电压每降低约 0.1V，循环寿命大致翻倍"
+      heat: >
+        热量是比循环次数更狠的因素。45°C 以上显著加速老化，
+        满电且长期处于 60°C 环境三个月可损失约 35% 容量。
+        本机形态恰恰是"屏幕最亮 + 持续充电"，是自发热最差的组合。
+      cycle_depth_reality_check: >
+        【避免一个常见误判】浅循环能增加"次数"，但每天的吞吐量是由耗电决定的，改不了。
+        按公开数据折算，无论 100% 深度还是 20% 深度，累计可吞吐的总电量基本是同一量级。
+        所以本项目的杠杆不在"怎么循环"，而在"长期停留在哪个 SOC 区间"+ "温度"。
+        这也是下面 Tier-A 把窗口压在 45-65% 而不是追求更深/更浅循环的原因。
+
+    strategy_decision:
+      selected: "Tier A：保留原电池 + 智能插座窄窗口循环"
+      decisive_argument: >
+        保留电池的最强理由不是寿命，而是**断电容错**：
+        电池天然吸收瞬时断电；一旦拆掉电池走旁路供电，任何一次供电闪断都会直接关机，
+        而这个系统的定位是"异地无人值守"——关机意味着必须有人到现场去按电源键，
+        等于用一个确定的运维灾难去换一个不确定的电池寿命收益。
+        只有当该失效模式可被接受时，才值得考虑 Tier B。
+      rejected_alternative: >
+        曾经设想的"每 24h 断电一次让电池深循环"，方向与化学常识相反，
+        v1.4 起废弃：满电停留 + 深度放电恰恰是最伤电池的两件事。
+
+    tier_a:
+      name: "默认方案：保留电池 + 慢充 + 智能插座窄窗口"
+      key_insight: >
+        【关键工程细节】不要用 44W 闪充来做周期补电。
+        44W 下补 20% 电量只需几分钟，插座的开关时长窗口窄到无法稳定控制，稍有偏差就是长期满电。
+        必须换用 5V/1A（5W）普通充电器，把补电速度压慢到数十分钟量级，
+        这样"开多久 = 补多少"才是可控的，控制精度由物理速率保证而不是靠定时器精度。
+      steps:
+        - "使用 5V/1A 充电器（明确禁用闪充头）"
+        - "实机标定一次：屏幕常亮+满载时，从 60% 掉到 40% 需要多少小时 → 得到放电速率"
+        - "据放电速率设智能插座补电窗口，目标区间维持 45-65%，宁可偏低不要偏高"
+        - "每周复核一次 SOC 区间的实际漂移（相机本身就是最好的 SOC 读数手段：看状态栏电量）"
+      smart_plug_requirement: >
+        必须选"本地执行定时"的插座，不能选纯云端调度型——
+        断外网时云调度会失效，而本地 schedule 仍在跑。
+        这一条直接决定该链路是否成为新的单点故障。
+      expected_outcome: "把主要失效因子从『满电+热』改为『常温浅循环』，鼓包风险显著下降"
+
+    tier_b:
+      name: "备选：拆电池 + 电池模拟器（旁路供电）"
+      when_to_use: "仅当确认可以接受『断电即关机且需人工开机』这一失效模式时才考虑"
+      method:
+        - "拆机取出电池，测量并记录原电池各引脚：B+ / B- / NTC（部分机型还有 BID 数据脚）"
+        - "用万用表实测 NTC 引脚对 B- 的阻值 —— 这是必须实测的，不能抄网上数值"
+        - "用稳压电源给 B+/B- 供 3.7-4.2V（建议 3.85V 标称），并在 NTC 与 B- 之间接等效电阻"
+        - "优先采购成品『电池模拟器 / 激活板』而不是裸电阻飞线"
+      why_measure_ntc: >
+        实测先例说明 NTC 取值高度机型相关：有案例实测约 2.35kΩ，
+        也有论坛经验给出 20-30kΩ。PMIC 判定温度异常会直接拒绝开机或报温度故障，
+        照抄他人数值属于高概率返工。
+      cited_evidence: "社区/维修业的普遍做法：DC 稳压源或电池模拟器 + NTC 等效电阻 是最常见的可行路径"
+      risks:
+        - "维修行业来源明确提示：电池模拟器定位是**维修测试**，不是长期驻留方案，长期挂机存在 PMIC 与热风险"
+        - "有实践者报告此类改造在运行一段时间后失效，长期可靠性无数据支撑"
+        - "拆机即失去保修与防尘防水（若原本有）"
+        - "失去断电缓冲（见 strategy_decision.decisive_argument）"
+      status: "NOT RECOMMENDED for this project"
+
+    tier_c:
+      name: "不采纳：不测 NTC 直接飞线给 B+/B- 供电"
+      reason: "PMIC 大概率判定电池缺失/异常而拒绝开机，或报温度故障；且长期安全边界未知"
+
+    screen_burnin:
+      cause: "静态 UI 长时间停留是 AMOLED 烧屏主因"
+      measures:
+        - "长时间无人操作时切到黑屏/息屏（注意：息屏后能否靠 HID 唤醒，需先看 Q4 的验证结论）"
+        - "避免常驻高对比度固定元素（如固定在顶部的状态栏图标无法避免，但其本身是系统层级，影响有限）"
+        - "降低亮度到仍可辨识的最低档，而不是无脑拉满 —— 亮度与 video 的可辨识度存在权衡，取平衡点"
+      note: >
+        注意这里与 android_prep.display 中"亮度拉满"存在冲突：
+        那是为图像比对争取信噪比，这是为寿命让步。
+        实测确定的正确做法是找到"刚好够用"的亮度，而不是默认最大。
+
+    verification_required:
+      - "实测一次放电速率并与 5W 充电速率对照，确认窗口设计合理"
+      - "连续运行两周后检查机身温度（不应出现明显温升才算合格）"
+
+  verification: "上述每项完成后在 README 打勾并附设置路径截图/录屏，避免换机重装时遗漏"
+
+# ------------------------------------------------------------
+target_device:
+  model: "vivo Y71t"
+  soc: "MediaTek Dimensity 810"
+  android_version: "11"
+  rom: "OriginOS 1.0（官方：基于 Android 11.0 开发）"
+  model_code: "V2102A"
+  bluetooth: "Bluetooth 5.1（支持 LE），解码扩展含 SBC/AAC/aptX/aptX HD/LDAC"
+  usb_type: "USB Type-C 2.0 (官方规格明确支持 OTG，含 OTG 反向充电；无 DP Alt Mode，无 HDMI 输出)"
+  otg_role: "官方已确认 OTG 支持，USB OTG HID 预留路径的可行性前提成立（兼容性仍待实测）"
+  screen_size: "6.44 inch AMOLED"
+  screen_aspect_ratio: "20:9"
+  screen_refresh_hz: 60
+  density_ppi: "~409（1080×2400 / 6.44 英寸算得，与公开参数一致）"
+  battery: "4000mAh 典型值 / 3920mAh 额定值，44W 闪充（官方参数）"
+  video_output: "NONE — 无 HDMI / 无 DP / 无 USB-C 视频输出"
+  key_constraint: "不支持外接显示，硬件 KVM 采集方案不可行，只能摄像头拍屏"
+
+  screen_resolution:
+    nominal: "1080 x 2400 (portrait)"
+    width: 1080
+    height: 2400
+    status: "CONFIRMED — 官方规格参数页，非占位值"
+    source: "https://www.vivo.com.cn/vivo/param/y71t（屏幕显示：6.44 英寸 / 20:9 / 分辨率 2400×1080 / AMOLED / 60Hz）"
+    cross_checked: "GSMArena 与百度百科口径一致：1080×2400、20:9、约 409ppi"
+    note: >
+      面板物理分辨率已确认，Q2 的「是多少」部分结案。
+      剩余待实测的是「应用可用区域」：状态栏（以及若采用三键导航时的导航栏）
+      会占用一部分高度。采用手势导航时通常无常驻导航栏，
+      可用区约为 1080 × (2400 - 状态栏高度)。
+    measurable_by: "adb shell dumpsys window displays → 读 app 矩形；或 wm size 减状态栏高度"
+    touch_target_hint: >
+      Android 最小可点击目标为 48dp。本机约 409ppi，密度桶大概率是 420 或 440dpi，
+      据此 48dp ≈ 126-132 屏幕像素。该数值远大于本方案落点误差预算，
+      说明验收指标的裕度是充裕的——真正的限制因素是可辨识度，而非精度。
+    todo: "真机到手用 dumpsys 回填 app 可用区域；此项已不再阻塞，可与 M3 标定同批完成"
+    consumed_by: "coordinate_mapping.coordinate_systems[SCR].range 与所有比例换算"
+
+# ------------------------------------------------------------
+hardware:
+  main_board:
+    model: "ESP32-S3-N16R8 (teiseky / 兼容板)"
+    soc: "ESP32-S3 dual-core Xtensa LX7 @ 240MHz"
+    flash: "16MB"
+    psram: "8MB Octal SPI (required for camera frame buffer)"
+    wireless: "WiFi 4 (802.11 b/g/n, 仅 2.4GHz) + Bluetooth 5 LE"
+    coexistence_caveat: >
+      WiFi 与 BLE 共用同一根 2.4GHz 天线与射频前端，靠分时复用仲裁。
+      持续 MJPEG 推流叠加高频 BLE HID 报告时存在互相抢占的可能，
+      表现为图传顿挫或 HID 报告延迟抖动。见 risk_register.R6。
+    usb_ports:
+      - type: "Type-C (USB-to-UART)"
+        purpose: "烧录 / 调试 / 串口日志"
+        chip: "CH343P or FTDI"
+      - type: "Type-C (Native USB OTG)"
+        purpose: "USB HID device (预留，可插 Y71t 当键盘/鼠标)"
+        speed: "USB 1.1 Full-Speed 12Mbps"
+        gpio: "GPIO19 (USB D-) / GPIO20 (USB D+)"
+    gpio_count: 45
+    price_range: "¥40-80"
+    notes: "双 Type-C 分工明确；N16R8 的 8MB PSRAM 是跑图传的前提"
+
+  camera:
+    model: "OV2640"
+    interface: "DVP 24Pin (HDF3M-B11)"
+    resolution_max: "UXGA 1600x1200"
+    recommended_resolution: "VGA 640x480 (balance clarity vs heat vs fps)"
+    recommended_fps: "10-15"
+    format: "MJPEG"
+    focus: "定焦镜头座，出厂多在 30cm~∞ 合焦；本场景必须手动旋出到近距离（见 hardware.optics.focus_procedure）"
+    price_range: "¥15-30"
+    notes: "OV2640 电压匹配好，发热低于 OV5640；但出厂焦点远不适用本项目的近距离拍摄"
+
+    lens:
+      typical_dfov: "66°（常见标配）；同尺寸模块亦有 73° / 90° / 120° 变体"
+      aperture: "F/2.0（标配常见标称）"
+      focal_length_derived: "DFOV 66° → f ≈ 3.46mm；DFOV 73° → f ≈ 3.04mm（由 1/4 靶面对角 4.50mm 反推）"
+      trust_level: >
+        【不要相信标称值】不同供应商的同款模块镜头差异极大，且 datasheet 自相矛盾的情况常见
+        （例如同一页面同时写 f=2.15mm 与 Fov(H)110°，两者在 1/4 靶面上不可能同时成立）。
+        因此设计上不依赖 FOV 标称值，改用 hardware.optics.measure_procedure 现场反推。
+      min_focus_distance_stock: >
+        标配定焦镜头出厂合焦点通常远于本项目所需距离，直接装上去画面一定是糊的。
+        这是比"装不装得下"更容易踩的坑：即使视野勉强够，糊掉等于全盘失败。
+
+    lens_distortion:
+      claim: "存在明显径向畸变（桶形），低端塑料镜头尤为突出"
+      important_correction: >
+        【修正 v1.1-v1.3 的一处技术表述错误】原文档写"由 coordinate_mapping.calibration 吸收"，
+        这句话在数学上不成立：单应矩阵 H 只能描述平面到平面的射影变换，
+        径向畸变是非线性的非射影畸变，H 无法吸收。
+        9 点标定用 H 去拟合带畸变的点，只会把畸变摊平成"平均残差"，
+        表现为中心准、边缘偏——而这恰恰落在最需要精度的屏幕四角。
+      correct_handling:
+        - "首选：OpenCV calibrateCamera 求内参 + 畸变系数，先 undistort 再 fit H（标定一次性离线完成）"
+        - "次选：增加标定点密度（≥ 4×4 = 16 点），并用 coordinate_mapping 的留一残差检验；若边缘残差系统性偏大，说明必须上 undistort"
+        - "不要为了视野换成 120° 鱼眼标称模块：畸变会把上述成本放大，得不偿失"
+      prioritized_because: >
+        这与 hardware.optics 的选型结论联动：为满足装下整屏所需的近距离，
+        若改用超广角镜头，畸变会成为新的主导误差源。因此选镜头时要在
+        "所需距离是否现实" 与 "畸变是否可控" 之间取平衡，66°~90° 是合理区间。
+
+  # --- DVP 接线参考 ---
+  pinout:
+    source: "参考自 ESP32-S3 常见摄像头方案板的 esp32-camera 配置"
+    warning: >
+      【必须核对】不同厂商的 N16R8 板卡 GPIO 分配不一致。
+      接线前务必拿实际板卡的原理图逐脚比对，不要照抄本表。
+      接错 XCLK/PCLK 不会烧毁但绝无输出；接错电源脚会直接损坏摄像头。
+    gpio_conflict_note: >
+      N16R8 使用 Octal Flash/PSRAM，GPIO 26-37 大概率被存储总线占用，
+      不可当作普通 IO 使用。选型和排障时先排除这一点。
+
+    ov2640_to_esp32s3:
+      XCLK: 10
+      PCLK: 13
+      VSYNC: 38
+      HREF: 47
+      SIOD: 40
+      SIOC: 39
+      D0: 15
+      D1: 17
+      D2: 18
+      D3: 16
+      D4: 14
+      D5: 12
+      D6: 11
+      D7: 48
+      PWDN: -1
+      RESET: -1
+
+    power:
+      VCC: "3.3V（严禁接 5V，OV2640 模块虽带 LDO 但部分板卡直通，务必先确认）"
+      GND: "共地，且与 ESP32-S3 单点共地以减少地环路噪声"
+    checklist:
+      - "杜邦线长度 ≤ 10cm：DVP 并行总线对线长极敏感，过长会导致花屏/丢帧"
+      - "排线远离 WiFi 天线与电源线，避免串扰"
+      - "若画面出现规律性条纹，优先怀疑线长与共地，而非驱动配置"
+    todo: "到货后第一件事用万用表确认摄像头模块的 VCC 电平再上电"
+
+  pin_headers:
+    soldered: false
+    note: "购买时确认'不焊针'——MVP 阶段不焊也能跑通摄像头+BLE；后续扩展物理按键必须焊排针"
+
+  cooling:
+    required: true
+    method: "铝制散热片 10x10x5mm 带背胶 ×2 (贴 ESP32-S3 屏蔽罩 + OV2640 背面)"
+    cost: "¥2-5"
+    notes: "长期跑 WiFi+摄像头+蓝牙 表面温度 60-70°C，加散热片降 8-12°C"
+    thermal_throttle: "超过阈值时先降 fps 再降分辨率，不要直接停机（见 reliability.degradation_ladder）"
+
+  power:
+    recommended: "5V/2A Type-C 电源适配器 (长期运行)"
+    avoid: "电脑 USB 口长期供电 (电流不稳、更热)"
+    brownout_risk: >
+      摄像头初始化瞬间电流冲击可能触发欠压重启。
+      建议在 5V 端并联 100-470µF 电解电容 + 0.1µF 瓷片电容。
+
+  mounting:
+    camera_distance: "13-16 cm（默认推荐 15cm，见 hardware.optics；v1.1-v1.3 写的 8cm 已证伪，勿再使用）"
+    camera_distance_warning: >
+      【已纠错】早期版本凭直觉写"8-12 cm 最佳 8cm"，几何计算表明这是错的：
+      标准 66° 镜头在 8cm 处只能装下约 56% 的屏幕长边（大半个屏幕在画面外）。
+      正确距离必须由镜头视场反推，见 hardware.optics.distance_table。
+    camera_angle: "俯拍 90° 或 斜拍 30-45°"
+    anti_reflection: "镜头周围贴黑色海绵遮光筒（近距离拍摄时屏幕很容易倒映镜片与环境光，遮光筒是必需品不是选配）"
+    phone_brightness: "Y71t 屏幕亮度拉到最大"
+    prefer_top_down: "优先接近 90° 正俯拍，可显著降低透视畸变，放宽对单应矩阵的畸变建模依赖"
+    required_rigidity: true
+    rigidity_note: >
+      【标定前置条件】摄像头与手机必须刚性固定。标定完成后任一部件发生位移，
+      都会使 coordinate_mapping 求得的单应矩阵立即失效。
+      万向臂/鹅颈管在此处是双刃剑：便于调角度，但易蠕变位移。
+      建议调试期用万向臂，标定后用扎带/热熔胶锁死关节，或改用 3D 打印刚性支架。
+    camera_orientation: "【建议】把摄像头整机旋转 90°，让画面呈竖向（480 宽 × 640 高）对齐手机长边"
+    orientation_reason: >
+      屏幕是 20:9（0.45），默认横向画面是 4:3（1.33），长宽比严重错配。
+      竖置后同一个 VGA 帧能塞进更多的屏幕内容，等效分辨率提升约 25%。
+      详见 coordinate_mapping.frame_coverage 的量化对比。
+    field_of_view_caveat: >
+      20:9 的屏幕放进 4:3 画面必然大量留白，这是本机型 + OV2640 组合的硬约束。
+      满载尺度（刚好装下整屏）下屏幕只占画面中间一条，两侧为无用背景，
+      建议在 UI 上裁掉两侧留白、只渲染屏幕区域。
+      若需更高采样密度，唯一办法是用 UXGA 单帧（不能流式）。
+      见 coordinate_mapping.frame_coverage。
+    accessories:
+      - "手机支架/万向夹 ¥15-30"
+      - "摄像头万向臂/鹅颈管 ¥10-20"
+      - "黑色海绵条/遮光筒 DIY ¥5"
+      - "杜邦线若干 ¥5"
+      - "扎带/热熔胶/刚性支架 (锁定关节用) ¥5-20"
+
+  # --- 光学几何：Q7 结案产出，决定 mounting.camera_distance ---
+  optics:
+    purpose: >
+      回答「摄像头离屏幕多远才装得下整屏」。这是纯几何问题，可离线算清，
+      不需要真机就能定死范围；反过来，把它留给现场试错会直接浪费调焦与标定的时间。
+
+    target_geometry:
+      screen_active_area_mm: "67.13 × 149.17mm"
+      screen_source: "由 6.44 英寸对角 + 20:9 反推：长边 = 163.58 × 20/√(20²+9²)"
+      screen_body_estimate_mm: "约 75 × 157mm（显示区外加约 4mm 边框，用于判断机身是否会遮挡）"
+      sensor_active_area_mm: "3.5904 × 2.7104mm"
+      sensor_source: "OV2640 有效阵列 1632×1232 @ 2.2µm，对角 4.4986mm，即俗称的 1/4 英寸"
+      key_assumption: >
+        视场由镜头与靶面决定，与输出分辨率无关（VGA 是 UXGA 的缩放/裁剪读出，不改视场）。
+        因此下表对 VGA / SVGA / UXGA 一律成立，这也是为什么不必为每种分辨率重算一遍。
+      notable_check: >
+        顺便验证了早期版本里的一个直觉：「8cm」这个数字来自"离得近看得清"的想当然，
+        但它只考虑了像素密度，完全没有考虑角覆盖——而角覆盖才是先决条件。
+
+    distance_table:
+      - condition: "DFOV 60°（f≈3.90mm，偏长焦的少见变体）"
+        dfov_deg: 60
+        hfov_deg: 49.5
+        vfov_deg: 38.4
+        min_distance_mm: 162
+      - condition: "DFOV 66°（最常见的标配镜头）"
+        dfov_deg: 66
+        hfov_deg: 54.8
+        vfov_deg: 42.7
+        min_distance_mm: 144
+      - condition: "DFOV 73°（部分模块）"
+        dfov_deg: 73
+        hfov_deg: 61.1
+        vfov_deg: 48.1
+        min_distance_mm: 126
+      - condition: "DFOV 78°"
+        dfov_deg: 78
+        hfov_deg: 65.8
+        vfov_deg: 52.0
+        min_distance_mm: 115
+      - condition: "DFOV 90°（广角变体）"
+        dfov_deg: 90
+        hfov_deg: 77.2
+        vfov_deg: 62.1
+        min_distance_mm: 94
+      - condition: "DFOV 120°（鱼眼变体，不推荐）"
+        dfov_deg: 120
+        hfov_deg: 108.2
+        vfov_deg: 92.4
+        min_distance_mm: 54
+    distance_table_note: >
+      表中距离是「摄像头已旋转 90° 竖置、且刚好完整覆盖屏幕显示区」的最小距离。
+      长边（149.17mm）是约束边，短边（67.13mm）在任何情况下都不是瓶颈——
+      这与 coordinate_mapping.frame_coverage 的结论一致：4:3 画面装 20:9，宽度永远富余。
+      实用取值请在最小值上加 5-10% 余量（留给手机边框、装机公差，以及 UI 可裁切的一点空白）。
+
+    coverage_at_distance:
+      - condition: "DFOV 66°，d=8cm（早期版本的推荐值）"
+        long_side_covered_pct: 55.6
+        verdict: "装不下：近半个屏幕在画面外。这是必须纠正的错误。"
+      - condition: "DFOV 66°，d=12cm（早期版本的 fallback 值）"
+        long_side_covered_pct: 83.4
+        verdict: "仍装不下，缺约 17%。早期把 12cm 当 fallback，实际上也不够。"
+      - condition: "DFOV 66°，d=14cm"
+        long_side_covered_pct: 97.3
+        verdict: "临界，勉强"
+      - condition: "DFOV 66°，d=15-16cm"
+        long_side_covered_pct: "104-111"
+        verdict: "推荐工作点：整屏入画且保留 4-11% 边框余量"
+      - condition: "DFOV 73°，d=13cm"
+        long_side_covered_pct: 103
+        verdict: "推荐工作点"
+      - condition: "DFOV 90°，d=10-11cm"
+        long_side_covered_pct: "107-118"
+        verdict: "可用，但要接受更重的径向畸变（见 hardware.camera.lens_distortion）"
+
+    recommended_working_point:
+      default: "未知镜头视场时：先按 15cm 试，再按 measure_procedure 反推校准"
+      if_66_deg: "15cm"
+      if_73_deg: "13cm"
+      if_90_deg: "10.5cm"
+      rule: >
+        不要一味拉远。屏幕在画面里占得越大，每个摄像头像素承载的屏幕像素越少，
+        标定与辨识才越好——所以「刚好装满 + 一点余量」才是最优解，不是「越远越安全」。
+
+    measure_procedure:
+      reason: "供应商给的 FOV 标称值不可信，必须用屏幕本身当标尺现场反推"
+      steps:
+        - "把摄像头刚性固定在某个距离 d（先用 150mm），正俯拍"
+        - "拍一帧，数出屏幕长边（149.17mm）在画面竖直方向占了 p 个像素；画面竖直总像素记为 M（VGA 竖置 M=640）"
+        - "画面在该方向的可见总宽度 L = 149.17 × M / p（单位 mm）"
+        - "实际竖直视场 FOV_v = 2 × arctan( L / (2d) )，由此得到 tan(FOV_v/2) = L/(2d)"
+        - "把 FOV_v 代回：完整装下所需最小距离 d_min = (149.17/2) / tan(FOV_v/2)"
+        - "把 d 调整到 d_min × 1.05 ~ 1.10，锁死机构后再标定"
+      cross_check: "若算出的 d_min 与 distance_table 里 66°/73° 那两行差得很远，先怀疑自己选错了模块，而不是怀疑公式"
+
+    focus_procedure:
+      warning: "出厂合焦点远于我们的工作距离，不调焦则画面必糊；这是比视野更易踩的坑"
+      steps:
+        - "先按 measure_procedure 定死距离 d，再调焦（顺序不能反，否则白调）"
+        - "镜头与座之间有螺纹，出厂多点了胶；用少量酒精浸润或热风枪低温软化后再旋"
+        - "逆时针微量旋转（< 1/4 圈）使焦点前移；边旋边看 VGA 实时画质"
+        - "判定标准：不要凭肉眼觉得凑合，要看 Pointer location 的十字线锐利度，或直接看标定图的最小线宽"
+        - "调好后用少量 UV 胶 / 指甲油把螺纹锁死，防止后续震动使焦点缓慢漂移"
+      acceptance: "在标定点最密的区域仍能分辨 1-2 像素宽的黑白边界"
+
+    depth_of_field:
+      model: "Hyperfocal 近似，CoC 取 2 像素 = 4.4µm，光圈 F/2.0"
+      examples:
+        - condition: "DFOV 66°（f=3.46mm），合焦 140mm"
+          near_mm: 127
+          far_mm: 156
+        - condition: "DFOV 66°（f=3.46mm），合焦 160mm"
+          near_mm: 143
+          far_mm: 181
+        - condition: "DFOV 73°（f=3.04mm），合焦 140mm"
+          near_mm: 124
+          far_mm: 162
+      conclusion: >
+        近距离微距下的景深比直觉浅得多，可接受范围只有 ±15-25mm。
+        这直接支撑 hardware.mounting.required_rigidity：约束的不只是朝向，
+        轴向 ±2cm 的位移就足以让画面掉出合焦区。机构必须同时约束「朝向」和「距离」。
+      caveat: "该模型假设衍射与塑料镜片像差可忽略，实际模块的宽容度通常略好于此估算；只用于判定风险量级，别当精确值"
+
+    consequences:
+      - "相机必须离屏 13-16cm 而非 8cm —— 这一改动会影响支架选型（普通手机夹的臂长要够）"
+      - "距离拉远后更容易倒映环境光，遮光筒从「可选」变成「必选」"
+      - "景深很浅 → 机构的轴向刚度要求和角刚度同样重要"
+      - "屏幕的物理长度 149mm 意味着整机占地至少约 16×8cm，部署位置要提前预留"
+
+# ------------------------------------------------------------
+# 采购清单（BOM）—— 汇总自 hardware，用于一次性下单
+# ------------------------------------------------------------
+bom:
+  currency: "CNY"
+  principle: "先最小集跑通（必选），确认方案成立后再补可选件，避免一次性买齐后返工"
+  revision: >
+    v1.4 重写。此前清单是在「8cm 距离 + 无长期供电设计 + 未考虑远程接入」的前提下写的，
+    三项前提都已被 v1.3-v1.4 的结论推翻，因此补进了四组此前完全缺失的物料：
+    Y71t 慢充组合（Q5 Tier-A）、本地定时智能插座（Q5/R15）、
+    Tailscale 常开节点（Q6）、以及支持 13-16cm 工作距的刚性悬臂与调焦耗材（Q7/R12）。
+    旧口径的「总价 <¥200」已作废，见 total_estimate。
+
+  legend:
+    ownership: "owned = 假定你已有；buy_now = 建议本次立刻下单；decide_first = 需你先拍板；later = M2 之后再买"
+    price: "¥ 为单件估算含常见区间的中位偏保守值，未含运费"
+
+  # --- 假定已有，不用买；但其中几项会直接影响下面的选型 ---
+  owned:
+    - item: "vivo Y71t 本体（含原装 Type-C 线）"
+      note: "原装线仅用于初期调试；长期供电会被下面的 5V/1A 头替代"
+    - item: "Win10 控制端电脑"
+    - item: "家用 WiFi 路由器"
+      note: "它可能就是 subnet router 的答案，见 decide_first"
+    - item: "万用表"
+      why: "上电前确认摄像头 VCC 电平、以及若走 Tier-B 时测电池 NTC 阻值"
+    - item: "酒精 / 热风枪 / 尖嘴钳 / 剪刀 / 指甲油"
+      why: "软化镜头螺纹的固定胶并旋转调焦；没有热风枪用电吹风凑合也可"
+
+  # --- 核心电子件：跑通 M0-M1 的最小闭集 ---
+  electronics_core:
+    - item: "ESP32-S3-N16R8 开发板（双 Type-C，不焊排针）"
+      qty: 1
+      unit_price: "¥40-80"
+      why: "MVP 核心；8MB PSRAM 是图传前提"
+      critical: "必须是 N16R8。N8R2 / N16R2 等 PSRAM 更小的版本跑不动 MJPEG (frame buffer)"
+    - item: "OV2640 摄像头模块 24Pin —— 优先买「可调焦/手拧镜头」版本"
+      qty: 2
+      unit_price: "¥20-35"
+      why: >
+        买 2 颗：一颗用，一颗用于排除摄像头本体故障（OV2640 的坏件率不可忽视）。
+        强烈建议买带手拧调焦环的版本，而不是点胶定焦的标配款 ——
+        标配款出厂合焦点远于本项目所需的 13-16cm，必须破坏点胶才能旋转，
+        这是 R12 的来源；多花十几块可以直接消除这个风险。
+      critical: "确认 VCC 为 3.3V 版本；部分板卡 VCC 直通，接到 5V 必烧"
+    - item: "Type-C 数据线（能传数据的，不是纯充电线）"
+      qty: 2
+      unit_price: "¥8-15"
+      why: "开发板有两个 Type-C：一个 USB-to-UART 用于烧录与串口日志，一个是 Native USB"
+      critical: "纯充电线不传数据，会导致『插上没反应』这种最浪费时间的故障"
+    - item: "杜邦线（母对母，≤10cm）"
+      qty: "20 根起"
+      unit_price: "¥5"
+      why: "DVP 并行总线对线长极敏感，超长会直接花屏"
+    - item: "铝制散热片 10x10x5mm 带背胶"
+      qty: 2
+      unit_price: "¥2-5"
+      why: "长期满载 WiFi+摄像头+蓝牙，表面 60-70°C"
+    - item: "5V/2A Type-C 电源适配器（给 ESP32）"
+      qty: 1
+      unit_price: "¥15-25"
+      why: "避免电脑 USB 口长期供电"
+    - item: "电解电容 470µF + 瓷片电容 0.1µF"
+      qty: "若干"
+      unit_price: "¥3"
+      why: "抑制摄像头初始化冲击电流导致的欠压重启"
+
+  # --- 机械与光学：Q7 把工作距离从 8cm 改成 13-16cm 后，这组成了关键路径 ---
+  mechanics_optics:
+    - item: "铝合金悬臂/魔术臂支架（横臂 ≥ 20cm，能负重且可锁死）"
+      qty: 1
+      unit_price: "¥25-50"
+      why: >
+        这是 Q7 的直接产出：工作距离变成 13-16cm，且要覆盖 149mm 的屏幕长度，
+        普通夹子式手机支架的臂长和刚度都不够。
+        关键不是买贵的，而是**能在拧紧后不再蠕变**（见 R3）。
+      critical: "要同时能约束摄像头的位置与俯角；鹅颈管单独用不推荐，太容易缓慢回弹"
+    - item: "手机固定座 / 万向夹（固定 Y71t）"
+      qty: 1
+      unit_price: "¥15-30"
+      why: "Y71t 与摄像头必须刚性固定，任何相对位移都会让单应矩阵失效"
+    - item: "黑色 EVA 泡棉条 / 哑光黑卡纸（自制遮光筒）"
+      qty: 1
+      unit_price: "¥5-10"
+      why: "近距离拍屏极易倒映镜片与环境光。这在 8cm 时代是可选，15cm 时代是必需"
+    - item: "扎带 + 热熔胶枪（若手边没有）"
+      qty: 1
+      unit_price: "¥15-25"
+      why: "标定完成后把所有关节锁死，包括轴向（景深只有 ±15-25mm，不能用会回弹的临时固定）"
+    - item: "UV 胶 或 透明指甲油"
+      qty: 1
+      unit_price: "¥5-10"
+      why: "调焦完成后锁死镜头螺纹，防止震动使焦点缓慢漂移（hardware.optics.focus_procedure 步骤之一）"
+    - item: "L 型铝合金角件 / 3D 打印件（可选，终态加固用）"
+      qty: "若干"
+      unit_price: "¥10-20"
+      why: "万向臂只能用于调试期；终态建议换成刚性结构"
+
+  # --- Y71t 长期供电组：Q5 Tier-A 的产物，此前清单完全没有 ---
+  powered_end_devices:
+    - item: "5V/1A 普通充电头 + Type-C 线（给 Y71t，**明确不支持快充协议**）"
+      qty: 1
+      unit_price: "¥15-25"
+      why: >
+        这是 Tier-A 最容易买错的一件。绝不能用 Y71t 原装的 44W 闪充头：
+        闪充下补 20% 电量只要几分钟，智能插座的开关窗口窄到无法稳定控制，
+        稍有偏差就变成长期满电浮充 —— 恰好是最伤电池的状态。
+        用 5W 慢充把补电拉到数十分钟量级，"开多久 = 补多少"才由物理速率保证。
+      critical: "下单前确认商品明确标注 5V/1A 且不兼容 QC/PD/VOOC"
+    - item: "本地执行定时的智能插座（或纯机械式时控开关）"
+      qty: 1
+      unit_price: "¥25-40"
+      why: "实现 Tier-A 的窄 SOC 窗口策略（目标 45-65%）"
+      critical: >
+        必须选**本地执行定时**的型号。纯云端调度型在断外网后不再执行 schedule，
+        Y71t 会一路放电到关机而你不在现场 —— 这就是 R15 的内容。
+        如果拿不准，直接买机械式定时插座更保守。
+
+  # --- 需要先拍板才能下单 ---
+  decide_first:
+    - item: "Tailscale subnet router 由谁来当"
+      why: "Q6 的唯一解；ESP32 自己跑不了客户端，必须有一台同网段的常开节点"
+      options:
+        - option: "现有家用路由器刷 OpenWrt 装 Tailscale"
+          cost: "¥0"
+          verdict: "最优，但要先查型号是否在 OpenWrt 支持列表且有足够 Flash"
+        - option: "换一台原生支持 Tailscale 的路由器（如 GL.iNet 系列）"
+          cost: "¥150-300"
+          verdict: "次优，一次性解决，但属于不必要的大额支出"
+        - option: "树莓派 Zero 2 W / 3B"
+          cost: "¥80-200"
+          verdict: "稳妥但要额外买电源与 SD 卡，且又多一个要维护的设备"
+        - option: "复用已有的 NAS / 旧 x86 小主机"
+          cost: "¥0"
+          verdict: "如果本来就在跑 Linux，这是性价比最高的答案"
+      action_required: "你先确认上面哪一条成立，才能下单，或确认这笔支出为 ¥0"
+      caution: "Android 手机/平板不能当 subnet router，其 Tailscale 客户端不具备路由通告能力"
+
+  # --- M2 之后再评估，不要现在买 ---
+  later:
+    - item: "排针 / 排母"
+      why: "MVP 不需要；只有做 v2 的物理按键扩展（继电器/FingerBot）才需要焊接"
+    - item: "继电器模块 / 物理按键机器人"
+      why: "extensibility 已预留，用于解决 R10（手机假死时无法恢复）"
+    - item: "microSD 卡"
+      why: "如需在 ESP32 侧本地留存标定与证据数据；MVP 不需要"
+    - item: "可调直流稳压电源（拆电池后充当电池模拟器）"
+      why: "仅当放弃 Tier-A、改走 Tier-B（拆电池旁路供电）时才需要，本项目不推荐"
+
+  purchase_spec_checklist:
+    note: "下单前逐条核对 —— 错买一件往往比多花几十块贵得多"
+    items:
+      - "开发板型号必须是 N16R8，确认 PSRAM = 8MB（不是 Flash 16MB 就够）"
+      - "开发板注明『不焊排针』"
+      - "摄像头 VCC = 3.3V；最好买可调焦版本而非点胶定焦"
+      - "Type-C 线是数据线，不是纯充电线"
+      - "给 Y71t 的充电头必须是不支持快充协议的 5V/1A"
+      - "智能插座必须本地执行定时"
+      - "悬臂支架横臂 ≥ 20cm 且能可靠锁死"
+
+  total_estimate:
+    electronics_core: "¥110-170"
+    mechanics_optics: "¥75-160"
+    powered_end_devices: "¥40-70"
+    subnet_router: "¥0-300（取决于 decide_first 的选择）"
+    total: "¥225-700，中位约 ¥300"
+    supersedes: >
+      作废 v1.1-v1.3 的「<¥200」口径。差额主要来自三块：
+      第二颗摄像头（排障用，¥20-35）、Tier-A 供电组（¥40-70）、
+      以及能覆盖 15cm 工作距的刚性悬臂（¥25-50）。
+      电子核心件本身仍在 ¥120 上下，此前的估算是低估了机械与耗材，不是低估了芯片。
+
+  note: "本表与 hardware.mounting.accessories 互为补充；凡有新购务必回填本章节"
+
+# ------------------------------------------------------------
+video:
+  source: "OV2640 摄像头拍 Y71t 屏幕 (非 HDMI/DP)"
+  pipeline: "OV2640 → ESP32-S3 DVP → PSRAM frame buffer → MJPEG encode → WiFi → Win10"
+  protocol: "WebSocket (ws://esp32/api/v1/stream) 或 HTTP multipart (http://esp32/api/v1/camera)"
+  encoding: "MJPEG (JPEG per frame, no H.264)"
+  resolution: "VGA 640x480 (推荐) / SVGA 800x600 (最大)"
+  fps: "10-15 (延迟不敏感)"
+  jpeg_quality: "10-14 (esp32-camera 参数，数值越小压缩率越高)"
+  recording: false
+  ocr: false
+  ai_vision: false
+  notes: "ESP32-S3 无 H.264 硬编，MJPEG 够用；不录不 OCR 不 VLM"
+
+  bandwidth:
+    per_frame_kb: "10-25 KB (VGA 中低画质)"
+    at_15fps: "约 150-375 KB/s，即 1.2-3.0 Mbps"
+    caveat: >
+      这是 WiFi 侧的持续负载。若 Tailscale 未能 P2P 打洞而走 DER 中继，
+      中继链路质量会成为瓶颈，表现为顿挫而非降帧。
+    optimization_levers: "降 jpeg_quality → 降 fps → 降分辨率，按此顺序调整"
+
+# ------------------------------------------------------------
+# 坐标映射 —— MVP 必做，非可选优化项
+# ------------------------------------------------------------
+coordinate_mapping:
+  required: true
+  criticality: "BLOCKING — 不做此步则『能看到画面但点不准』，整个方案不可用"
+  rationale: >
+    一次点击要穿过三次坐标变换。用户在 Win10 画面上看到的是摄像头成像像素，
+    而 BLE 报告只能承载 HID 逻辑坐标，二者之间必须经过屏幕物理像素做桥接。
+    摄像头俯拍必然存在透视畸变与径向畸变，CAP 与 SCR 之间是射影变换而非线性关系，
+    直接用画面像素线性缩放到 HID 会导致中心尚可、边缘严重偏移。
+
+  coordinate_systems:
+    - id: "CAP"
+      name: "摄像头画面坐标系 (Camera Pixel)"
+      unit: "pixel"
+      origin: "MJPEG 帧左上角 (0,0)"
+      range: "VGA 模式下 x∈[0,639], y∈[0,479]"
+      source: "Win10 canvas 上鼠标点击位置换算得到"
+      observable: true
+      note: "唯一用户可直接观测的坐标系，但它是畸变后的投影结果"
+
+    - id: "SCR"
+      name: "Y71t 屏幕物理坐标系 (Screen Pixel)"
+      unit: "px"
+      origin: "屏幕左上角 (0,0)"
+      range: "以 target_device.screen_resolution 实测值为准，如 x∈[0,1079], y∈[0,2399]"
+      source: "中间桥梁坐标，实际不可直接观测，只能由标定反推"
+      observable: false
+      note: "所有 UI 层的决策都基于这一层讨论，是换算的枢纽"
+
+    - id: "HID"
+      name: "BLE HID 逻辑坐标系 (HID Logical)"
+      unit: "logical unit"
+      origin: "左上角 (0,0)"
+      range: "0-10000（整数域，X/Y 各 16 bit）— 已确认"
+      source: "BLE 绝对坐标触控报告的实际载荷"
+      observable: false
+      transport: "HID over GATT，Report ID 0x01，单帧 5 字节"
+      report_layout: "[state:1B][X_MSB][X_LSB][Y_MSB][Y_LSB]，state 的 bit0=Tip Switch，bit1=In Range"
+      state_encoding: "按下 = 0x03（Tip Switch + In Range 同时置位）；抬起 = 0x00"
+      note: >
+        上界 10000 由所选库的 Report Descriptor 声明，Android 将其线性映射到整屏。
+        不要自行编造其它上界；若换库必须重新读取 descriptor 确认。
+        该值与屏幕分辨率无耦合，因此换机型或改可用区域时无需改描述符。
+
+  # --- 取景分析：20:9 屏幕 vs 4:3 传感器 ---
+  frame_coverage:
+    purpose: "量化「整屏能否装下、装下后还剩多少有效像素」，这直接决定画面的辨识下限"
+    premise: "1080×2400（20:9）的屏幕 + OV2640 的 4:3 画幅，长宽比错配，装下整屏必然留白"
+
+    table:
+      - mode: "VGA 横向 640×480（默认）"
+        scale: "受限边为画面高，s = 480/2400 ≈ 0.20"
+        screen_footprint: "约 216×480"
+        waste: "画面宽度浪费约 66%"
+        scr_per_cap_px: 5.0
+      - mode: "VGA 竖向 480×640（摄像头旋转 90°）"
+        scale: "s = 640/2400 ≈ 0.267"
+        screen_footprint: "约 288×640"
+        waste: "画面宽度浪费约 40%"
+        scr_per_cap_px: 3.75
+      - mode: "SVGA 竖向 600×800"
+        scale: "s = 800/2400 ≈ 0.333"
+        screen_footprint: "约 360×800"
+        waste: "约 40%"
+        scr_per_cap_px: 3.0
+      - mode: "UXGA 竖向 1200×1600（仅单帧，不可流式）"
+        scale: "s = 1600/2400 ≈ 0.667"
+        screen_footprint: "约 720×1600"
+        waste: "约 40%"
+        scr_per_cap_px: 1.5
+
+    distance_linkage: >
+      本表隐含前提是「屏幕长边恰好铺满画面」，而这个前提不是免费的：
+      它由 hardware.optics 的几何关系决定，具体由相机到屏幕的距离实现。
+      距离过近 → 屏幕装不进画面（边缘无标定点）；
+      距离过远 → 屏幕在画面里只占一小块，scr_per_cap 恶化。
+      因此挑距离的正确目标是「刚好装满 + 5-10% 余量」，而不是"越近越好"或"越远越保险"。
+      参见 hardware.optics.distance_table 与 recommended_working_point。
+
+    conclusion:
+      - "默认横向 VGA 是最差选择：屏幕只占画面的三分之一宽，强烈建议物理旋转摄像头 90°"
+      - "流式只看 VGA；校准与关键取点用 UXGA 单帧，能把单点取样精度提升约 2.5 倍"
+      - "即使在最好的 VGA 流式方案下，1 个摄像头像素 ≈ 3.75 个屏幕像素，
+         所以「辨识小字」从来不是本方案的能力范围——重申 non_goals 已排除 OCR/AI 视觉"
+      - "留白区域在 UI 上应裁掉，既省带宽也减少误点"
+
+    impact_on_acceptance: >
+      按人眼点击抖动 ±2 个摄像头像素估算，竖置 VGA 下降解到屏幕坐标是 ±7.5 px。
+      对照 48dp 最小触控目标（本机型约 126-132 px），该误差仅占目标尺寸的 6%，
+      因此「点得准」在工程上是稳的；但 UI 里不应把容错建立在精细化描点上。
+
+  transform_chain:
+    step_1_CAP_to_SCR: "单应矩阵反变换 SCR_pt = H^-1 · CAP_pt（射影变换，一并吸收透视与径向畸变）"
+    step_2_SCR_to_HID: "线性缩放 HID_x = round(SCR_x / (SCR_W-1) * 10000)，y 同理（HID_MAX 已确认为 10000）"
+    forward_summary: "CAP --[H^-1 单应]--> SCR --[线性缩放]--> HID --[BLE report]--> Y71t"
+    reverse_summary: "SCR --[摄像头成像]--> CAP，由硬件安装几何决定，锁定后视为常量"
+    forbidden_shortcut: >
+      禁止 CAP → HID 直接线性缩放。这是最容易犯的工程错误，
+      倾斜 30-45° 安装时边缘误差可达数十像素以上。
+
+  calibration:
+    enabled: true
+    method: "单应性矩阵 Homography H (3x3)，OpenCV findHomography 或 numpy 最小二乘求解"
+    min_points: 4
+    recommended_points: 9
+    point_layout: "3x3 网格均匀分布于屏幕可见区，内缩约 10% 避开四角极端畸变区"
+    flows:
+      - "Y71t 全屏显示高对比 3x3 网格标定图（务必避开纯黑——AMOLED 黑像素不发光，取不到特征）"
+      - "关闭自动息屏，屏幕亮度拉满"
+      - "Win10 拉取单帧（建议临时切 UXGA 提高取点精度，采集完成后再切回 VGA 运行）"
+      - "UI 进入标定模式，依次点击 9 个已知 SCR 坐标对应的画面位置，记录 CAP 坐标"
+      - "用 9 组 (CAP_i, SCR_i) 对应点求解 H（点数 ≥5 时做最小二乘拟合）"
+      - "leave-one-out 残差校验：逐点剔除后重算，预测残差 > 3 px 判定标定失败并重采"
+      - "H 矩阵持久化：写入 ESP32 NVS 或 Win10 本地 JSON（按 device_id 分 profile）"
+    persistence: "必须跨重启保留，不得每次上电重新标定"
+
+    frame_source:
+      decision: "标定点采集统一切到 UXGA 单帧；出流仍用 VGA"
+      reason: "竖置 VGA 下 1 CAP px ≈ 3.75 SCR px，人工取点抖动会被放大近 4 倍；
+              UXGA 下该比例降到 1.5，且大图更容易对准网格交叉点"
+      note: "注意 H 的入参坐标系必须统一：若按 UXGA 取点，运行时需按分辨率比对 CAP 坐标做预缩放"
+
+    residual_offset:
+      enabled: true
+      reason: >
+        单应矩阵能吸收几何畸变，但吸收不了「系统性偏移」——
+        例如 Android 对 HID 坐标映射的取整方式、屏幕可用区域与面板分辨率不一致
+        （状态栏占用导致的整体下移）。这类偏差表现为全画面整体偏移而非局部失真。
+      mechanics: "在 H 之后追加一个常量平移 (dx, dy)，由 9 点残差的均值估计"
+      library_support: "Autfy/ESP32-BLE-HID 的 setCalibrationOffset(offsetX, offsetY) 即为此设计"
+      order: "必须先做 H 再做 offset，且二者要迭代一次：offset 会改变残差分布"
+    resolution_policy: >
+      标定帧与运行帧分辨率不同时，须按分辨率比例对 CAP 坐标做预缩放，
+      保证 H 矩阵入参坐标系一致。建议统一在 VGA 域标定以减少换算环节。
+    retrigger:
+      - "摄像头或手机任一位移 / 被触碰"
+      - "观察到点击偏差肉眼可见"
+      - "重新调焦或重新安装遮光筒"
+      - "更换分辨率配置"
+    api: "POST /api/v1/calibrate/point 采集单点，POST /api/v1/calibrate/commit 提交并求解"
+
+  error_budget:
+    source_breakdown:
+      - "支架位移/蠕变 → H 失效（最高频，误差无上界）"
+      - "标定点人工取点误差 ±1-2 CAP px → 放大到 SCR 约 ±3-5 px"
+      - "JPEG 块状伪影导致边缘定位抖动 1-2 px"
+      - "标定点过少或无冗余 → 最小二乘失去残差约束，畸变建模不足"
+      - "8cm 距离下 OV2640 视野可能裁切屏幕边框 → 边缘区域无标定点覆盖"
+    mitigation:
+      - "锁定关节，标定后禁止挪动"
+      - "9 点取点 + 残差门槛双重约束"
+      - "关键操作避开屏幕最外 5% 区域"
+      - "每个关键点击后拉帧做位置回读（见 automation.coordinate_assertions）"
+
+  acceptance:
+    center: "屏幕中心 60% 区域内点击落点误差 < 5 屏幕物理像素"
+    edge: "四角区域误差 < 15 屏幕物理像素"
+    repeatability: "同一目标连续点击 10 次，落点标准差 < 3 px"
+    verification: "开启开发者选项「指针位置」，肉眼读数与指令期望值比对"
+    sanity_check: >
+      本机型最小触控目标约 126-132 px（48dp），上述误差预算仅占其个位数量级的百分点，
+      指标本身是充裕的。若实测不达标，先怀疑 H 矩阵失效或存在系统性 offset，
+      而不是要求更精细的点击——像素采样密度（3.75 SCR px / CAP px）才是物理上限。
+    dont_confuse: >
+      注意「点击精度」与「视觉可辨识度」是两个不同问题：
+      前者受标定质量影响，后者受 frame_coverage 的采样密度限制，后者无法通过工程优化解决。
+
+  runtime_placement:
+    decision: "MVP 阶段换算放在 Win10 客户端"
+    reason: "Win10 侧有 numpy/OpenCV，调试可视化方便；ESP32 只接收最终 HID 指令"
+    esp32_api: "POST /api/v1/tap 接收已换算的 HID 坐标"
+    future_option: "多设备量产后可把 H 写入 NVS，改由 ESP32 端换算，减少一轮往返"
+
+# ------------------------------------------------------------
+input:
+  primary: "BLE HID (ESP32 广播为蓝牙键盘+鼠标+Consumer Control)"
+  secondary: "USB OTG HID (预留，需验证 Y71t OTG 兼容性)"
+  tertiary: "物理按键/继电器 (预留，本期不做)"
+
+  ble_hid:
+    keyboard: true
+    mouse_relative: true
+    mouse_absolute: true
+    consumer_control: true
+
+    # --- 相对 / 绝对坐标决策（编码前必须收口）---
+    coordinate_mode:
+      status: "RESOLVED — 采用 absolute（Digitizer 触摸屏方案）；剩 ROM 兼容性实测，不再阻塞选型"
+      decision_date: "2026-09-28"
+      summary: >
+        relative 模式发送位移增量 (dx,dy)，需要「归零」且误差会累积；
+        absolute 模式直接发送目标点绝对坐标，一步到位，零累积漂移。
+      resolved_answer: >
+        【Q1 结案】Android 接受第三方 BLE 绝对坐标，但关键在前置条件：
+        必须走 Digitizer / Touch Screen 描述符（Usage Page 0x0D + Usage 0x04），
+        而不是「传统鼠标描述符 + Absolute 标志位」。后者在 Android 上不可靠，
+        这正是社区里「绝对鼠标在安卓点不动」的根因。
+        两个独立证据相向印证：
+        (1) sobrinho/ESP32-BLE-Abs-Mouse 明确使用 digitizer 描述符且标注兼容 Android，
+            其实现细节显示 5 字节报告、Report ID 0x01、逻辑范围 0-10000、state=0x03 为按下；
+        (2) Autfy/ESP32-BLE-HID 文档直接写明「Android 等设备会将 0~10000 逻辑坐标映射到屏幕」，
+            并提供 setScreenSize(1080, 2400) 与像素坐标自动换算接口。
+      evidence_note: >
+        反面旁证：开源库 kshoji/BLE-HID-Peripheral-for-Android 的兼容矩阵里，
+        「绝对鼠标」只在 macOS 上确认可用，Android 作为中心设备一列没有通过验证。
+        这与上述结论不矛盾——它验证的是「绝对鼠标」路径，而非「触摸屏」路径。
+      consequence_for_mvp: >
+        坐标模式已确定，implementation_order.step_4 的门禁 A 降级为一小时级的
+        兼容性冒烟测试，不再是选型决策。选型、库依赖、协议格式可以提前固化。
+      residual_risk: "OriginOS 1.0 / Android 11 定制 ROM 仍可能在个别机型上忽略该描述符，故 M2 需真机冒烟"
+
+      relative_mode:
+        mechanism: "BLE Mouse 相对坐标，报告 (dx, dy) 位移增量 + 按键状态"
+        tap_procedure:
+          - "先把虚拟指针移到已知原点（发 HOME / BACK，或连续大额负位移撞边界饱和）"
+          - "分多帧发送位移逼近目标"
+          - "到位后发点击事件"
+        pros:
+          - "兼容性最好，Android 普遍支持，ESP32-BLE-Mouse / ESP32-BLE-Combo 均可实现"
+          - "不依赖特殊的 HID Report Descriptor"
+        cons:
+          - "无法读回指针真实位置，误差累积漂移且不可自愈"
+          - "tap 前需多步 move，实际延迟 = 100-300ms × 步数，体感明显"
+          - "swipe 需高频插帧，帧间抖动会被安卓指针速度曲线放大"
+        drift_mitigation:
+          - "每次 tap 前先 HOME/BACK 归位（最有效，代价是破坏当前上下文）"
+          - "利用「指针到边界后位移饱和」特性做边界复位"
+          - "视觉闭环：点完拉帧比对是否命中，未命中做一次小步修正（限 2 次）"
+        requires_pointer_origin_state: true
+
+      absolute_mode:
+        selected: true
+        mechanism: "BLE Touch / 绝对鼠标，直接报告目标点在 HID 逻辑域中的绝对位置"
+        correct_descriptor_spec:
+          usage_page: "Digitizer (0x0D)"
+          usage: "Touch Screen (0x04)"
+          collections: "Application → Stylus (0x20) Physical → Pointer"
+          touch_flags: "Tip Switch (0x42) 1 bit + In Range (0x32) 1 bit + 6 bit padding"
+          axes: "X (0x30) / Y (0x31)，各 16 bit，Logical + Physical Max = 10000"
+          report_id: "0x01"
+          report_length: "5 字节"
+          state_machine: "按下 = 0x03；抬起 = 0x00"
+          warning: >
+            不要把上述写法理解成「鼠标描述符 + Absolute 标志」。
+            二者在 Android 上的结局完全不同——前者被 InputReader 认作触摸屏，
+            后者常常被静默丢弃。这是本方案最容易踩空的一步。
+        tap_procedure:
+          - "SCR → HID 线性映射（见 coordinate_mapping.transform_chain.step_2）"
+          - "发送 state=0x03 的按下报告，坐标指向目标点"
+          - "间隔数毫秒后发送 state=0x00 抬起（Tip Switch 与 In Range 同时清零）"
+        swipe_procedure: "按下后按路径插值发送中间点（set_steps 控制），最后抬起；Contact ID 恒定"
+        library: "Autfy/ESP32-BLE-HID（键盘 + 绝对触控复合，明确支持 WiFi 共存）"
+        library_api_notes:
+          - "setScreenSize(1080, 2400) 后可直接 sendAbsolutePixel() 传像素坐标，无需自行换算"
+          - "setLogicalRange(maxX, maxY) 默认 10000x10000，与 descriptor 一致，通常无需改"
+          - "setCalibrationOffset() 用于修残余系统性偏移，对应 coordinate_mapping.calibration.residual_offset"
+          - "swipeLinear / swipeBezier 已内置插值，不必自己写"
+        pros:
+          - "一步到位，无累积漂移，无需归零，延迟最低"
+          - "swipe 可按路径插值，轨迹可控且平滑"
+          - "与坐标标定天然契合：CAP→SCR→HID 全链路确定"
+          - "注入的是真实触摸事件，行为等同于手指操作，兼容性优于模拟鼠标"
+        cons:
+          - "依赖单一维护者的库（活跃度已确认至 2026-02，但仍是单作者项目）"
+          - "触摸屏模式下没有可见光标，「指针位置」开发者选项是唯一视觉反馈来源"
+          - "OriginOS 1.0 / Android 11 个别 ROM 仍可能忽略该描述符"
+        validation_required: "真机冒烟：一次 tap + 一次 swipe，看是否产生触控反馈"
+        requires_pointer_origin_state: false
+
+      decision_rule: >
+        【已于 2026-09-28 收口】采用 absolute，且必须是 Digitizer 触摸屏描述符而非绝对鼠标。
+        只有当 Y71t 实测确实不接受触摸屏描述符时才回退 relative + 归零；
+        「绝对鼠标不管用」不等于「绝对坐标不管用」，不要过早回退。
+
+      fallback_trigger: "仅当触摸屏描述符在 Y71t 上确认无效时，才启用 relative_mode"
+
+      verification_checklist:
+        - "Y71t 开启开发者选项「指针位置」，看 tap 是否出现触点标记而不是鼠标箭头"
+        - "确认 tap 的落点坐标与期望值一致（这一条同时验证 10000 逻辑范围映射是否正确）"
+        - "验证 swipe 能真实滚动列表（UC3），单次 tap 无法暴露的问题会在 swipe 上暴露"
+        - "验证键盘与触控能在同一连接中共存（发 HOME/BACK 后再 tap）"
+        - "验证 BLE HID 与 WiFi 图传同时工作不断连（对应 risk R5）"
+        - "修改过 Report Descriptor 后必须在 Y71t 上删除旧配对重新配对，主机缓存了旧的 Report Map"
+
+      known_gotchas:
+        - "主机缓存 Report Map：改描述符后不重配对，现象是「改了没反应」，极易误判为方案不可行"
+        - "state 字节必须同时置位 Tip Switch 与 In Range（值 0x03）；只置 Tip Switch 会导致部分 ROM 无响应"
+        - "抬起必须显式发送 state=0x00，否则会停留在按下状态导致后续指令行为异常"
+        - "报告长度必须是 5 字节且与描述符完全一致，少一个字节会静默失效"
+        - "MTU 建议设 185 左右，连接参数影响延迟；均与 latency_budget 相关"
+
+    supported_actions:
+      - "tap (x, y) — absolute 已确定：单次按下 + 抬起的触控报告，无需归零"
+      - "swipe (x1,y1 → x2,y2, duration) — 用库内置的 swipeLinear / swipeBezier 插值"
+      - "key (HOME / BACK / VOL_UP / VOL_DOWN / POWER_COMBO)"
+      - "text (ASCII only, 中文不支持)"
+      - "media (Play/Pause/Next/Prev)"
+    latency: "100-300ms (BLE 固有延迟，可接受)"
+    latency_note: "采用 absolute（单次报告），不存在 relative 那种 ×逼近步数的延迟放大；UI 无需额外标注"
+    pairing: "Y71t 蓝牙配对一次，后续自动重连"
+    reconnect_policy: "断连后自动恢复广播并重广告；连续 N 次失败则重启 BLE 栈而非整机（见 reliability）"
+
+  usb_otg_hid:
+    enabled: false
+    note: "预留接口，固件中保留 USB HID gadget 代码但不默认启用"
+
+  physical_keys:
+    enabled: false
+    note: "预留 GPIO → 继电器/FingerBot 按电源/音量键，本期不做"
+    blocked_by: "缺少电源键/黑屏唤醒能力，手机一旦息屏或无响应即失去控制；纳入 v2.0 评估"
+
+# ------------------------------------------------------------
+# MVP 具体用例 —— 替代 automation 中「3-5 个固定用例」的模糊表述
+# 用例按依赖递进排列，每个用例必须可独立重跑并产出证据
+# ------------------------------------------------------------
+use_cases:
+  - id: "UC1"
+    name: "基本导航"
+    steps: ["发 BACK", "发 HOME", "按压 → 回到桌面"]
+    asserts: "当前画面切换为桌面"
+    covers: "BLE HID 基础通路是否被 Y71t 接受"
+
+  - id: "UC2"
+    name: "打开指定 App"
+    steps: ["HOME", "在桌面 tap 目标 App 图标位置", "等待 2s"]
+    asserts: "画面出现该 App 主界面"
+    covers: "CAP→SCR→HID 全链路 + 图标定位精度"
+
+  - id: "UC3"
+    name: "列表滚动"
+    steps: ["进入长列表界面", "swipe 从底部上滑", "等待 1s"]
+    asserts: "画面内容相对上滑前发生变化，且滚动方向正确"
+    covers: "swipe 插帧策略与安卓滚动方向约定"
+
+  - id: "UC4"
+    name: "定点返回"
+    steps: ["在任意界面发 BACK", "连续 3 次"]
+    asserts: "每步画面均发生变化，最终回到桌面"
+    covers: "连发指令的时序可靠性与去抖"
+
+  - id: "UC5"
+    name: "长时稳定性"
+    steps: ["以 5s 间隔循环执行 UC1 一次，持续 1 小时"]
+    asserts: "全程无失联、无累计漂移，末尾落点误差仍在 acceptance 范围内"
+    covers: "reliability 与 coordinate_mapping 的联合验证"
+
+# ------------------------------------------------------------
+# 端到端延迟预算 —— 用于设定正确预期，而非优化目标
+# ------------------------------------------------------------
+latency_budget:
+  philosophy: "本方案对标 PiKVM 的低延迟不可比；目标是『发指令-看结果』节奏，不是实时操作"
+
+  breakdown:
+    - stage: "摄像头采集 + JPEG 编码"
+      cost_ms: "40-80"
+      note: "VGA 下主要成本，受 quality 参数影响"
+    - stage: "WiFi → ESP32 → WS/HTTP"
+      cost_ms: "5-20"
+      note: "局域网；走 Tailscale DER 中继时另加"
+    - stage: "Tailscale 加密/隧道开销"
+      cost_ms: "5-40"
+      note: "P2P 直连取低值，DER 中继且跨运营商时取高值"
+    - stage: "Win10 canvas 渲染"
+      cost_ms: "10-30"
+      note: "取决于浏览器与机器负载"
+    - stage: "点击指令下行至 ESP32"
+      cost_ms: "10-30"
+      note: "HTTP 往返"
+    - stage: "BLE HID 报告"
+      cost_ms: "100-300"
+      note: "relative 模式需乘以逼近步数，是最大的单项"
+
+  round_trip_estimate: "单次操作从点击到画面反馈约 0.5-1.5s"
+  unsuitable_for: ["实时游戏", "高频拖拽", "需要即时视觉反馈的手速操作"]
+
+  measurement_plan: >
+    推荐用屏幕内计时器测：在 Y71t 上显示毫秒计时 App，
+    控制端截图并 OCR/肉眼读出画面内的时间戳，与本地时间戳相减即为真实端到端延迟。
+    注意做完即关闭 OCR 类行为，non_goals 中已排除 OCR 进入正式实现。
+
+# ------------------------------------------------------------
+network:
+  topology: "Win10(广域网) ←→ Tailscale/WireGuard ←→ ESP32(内网 NAT)"
+  vpn: "Tailscale (免费版，P2P 直连，无需公网 IP)"
+  port_forwarding: false
+  public_exposure: false
+  server_required: "conditional（v1.5 起）"
+  server_required_note: >
+    v1.4 及以前为 false（subnet router 路径）。v1.5 因目标改为开源分发/大规模部署，
+    默认传输路径改为 outbound_relay（设备主动出站到 broker），故该值变为 conditional：
+    - outbound_relay（默认）：需要一个 WAN 可达的 broker，由部署者自建或自选
+    - ipv6_direct（可选）：不需要任何服务器
+    - lan_direct（开发/调试/已有 subnet router）：不需要服务器
+    public_exposure 仍保持 false —— 默认路径下设备是主动出站方，自身不暴露在公网。
+
+  esp32_access:
+    status: "RESOLVED — 在 server_required=false 约束下，唯一解是同网段的 subnet router；这不是二选一的选择题"
+    v1_5_scope: >
+      【v1.5 定位变更】本节整体降级为 **lan_direct 后端的部署指南**。
+      项目默认路径已改为 outbound_relay（见 scalability.selected_path），
+      因此本节不再是所有部署者的必经之路；仅在选择 lan_direct 时才需要按本节操作。
+      本节的技术结论（含四个坑与 subnet router 的选型）依然有效。
+    conclusion: >
+      【Q6 结案】在既定约束内，ESP32 侧没有任何解法：它跑不了 Tailscale 客户端，
+      而"能联网就能远程控制"之所以在智能设备上成立，是因为那些设备端跑了一个
+      常驻客户端（应用层连厂商 MQTT 云，或网络层自带 VPN 客户端）主动加入了某张网。
+      ESP32 两者都做不到，只能做被动的服务端，因此必须有人替它出席。
+      而 Tailscale 官方对"无法安装客户端的设备"（摄像头、NAS 老旧内核、打印机、
+      交换机）给出的标准答案就是 subnet router —— 由同网段一台常开的 Tailscale 节点
+      代为通告路由。因此本项目的答案收敛为：必须有一台常开节点。
+      真正需要决策的只是"这台常开节点用谁来当"。
+    hard_constraint: "该节点必须与 ESP32 在同一二层/三层网段内，并且处于常开状态"
+    scope_note: >
+      【措辞边界】「唯一解」的成立前提是 network.server_required=false —— 不引入自有公网服务器。
+      远程控制在架构上必然需要一个「永远在线的中间人」，区别只在于由谁充当：
+      厂商云 / 设备自带 VPN 客户端 / 本地常开节点 / 自建公网跳板。
+      前两者 ESP32 均不可用（无厂商云、跑不动客户端），故排除后只剩后两者。
+      若放宽该约束，ESP32 可改为主动出站连公网跳板从而免除常开本地节点，
+      见 fallback_if_no_always_on_node —— 那条路可行但优先级最低。
+    self_hosted_relay_comparison:
+      question: "自建公网跳板（VPS/frp）与自建 subnet router，本项目选哪个？"
+      verdict: "选 subnet router。在本项目的具体条件下差距是量级性的，不是偏好问题。"
+      decisive_factors:
+        bandwidth_path: >
+          【决定性】subnet router 的最坏情况 ≈ 自建跳板的常态。
+          Tailscale 打洞成功时，画面流只有"控制端→router"一段走公网，router→ESP32 是本地一跳（<1ms）；
+          只有对称 NAT 打洞失败才落到 DER 中继。
+          而自建跳板下两段都必然走公网，中继不是退路而是唯一路径，
+          端到端延迟约为前者的 2 倍量级，且受 VPS 地理位置与带宽上限约束。
+        security_surface: >
+          规格 threat model 明确：任何人能访问 ESP32 的 HTTP API 即获得 Y71t 完整操作权。
+          subnet router 下访问面是"内网 + Tailscale ACL 白名单"；
+          自建跳板把它变成"公网可达 + token"，从被内网保护变成被全网扫描。
+          同时画面流全程经过租来的机房，而 P2P 时不经过任何第三方。
+        cost_shape: >
+          subnet router 是一次性支出（¥0-300，复用现有设备则 ¥0）加约 5W 电费；
+          VPS 是持续订阅（约 ¥24-100/月），三年即为 ¥1000-3000，且需续费、备案、加固、监控。
+        bandwidth_budget: >
+          按 video.bandwidth 1.2-3.0 Mbps 估算（取 2 Mbps，且控制端按需拉流）：
+          每天连续看屏 2 小时 ≈ 53 GB/月，8 小时 ≈ 211 GB/月。
+          后者已接近常见轻量服务器的月流量包上限，长时间看屏场景会先撞到流量墙而不是带宽墙。
+        architectural_principle: >
+          把复杂度放在资源充裕的一端。ESP32 是链条里最弱的一环（内存、算力、调试手段都最受限），
+          subnet router 让它只做最擅长的事——在局域网里当一个被动的 HTTP 服务器；
+          自建跳板则要求它额外维护到 VPS 的持久出站长连接、心跳与重连，把最难的活交给最弱的节点。
+      when_to_reconsider: >
+        仅当现场确实凑不出任何常开节点时才回到自建跳板
+        （例如设备部署在无法放置路由/小主机的位置，或只能依赖 4G 热点）。
+        届时应重新评估 security_surface 一项，至少补齐 TLS、来源白名单与速率限制。
+      note: >
+        顺带澄清一个容易混淆的点：Tailscale 本身已经是"不用自建云的自建云"——
+        它提供托管控制面，数据面仍走 P2P。所以这里的对比不是"要不要有中间人"
+        （中间人必然存在），而是"中间人的数据面放在租来的机房还是放在家里"。
+
+    candidate_nodes:
+      - option: "路由器本身跑 Tailscale（OpenWrt / 部分商用固件自带）"
+        verdict: "最优：不增加物理设备，且路由器天然常开"
+      - option: "树莓派 / 旧 x86 小主机 / NAS"
+        verdict: "次优：稳定可控，但引入新硬件（需进 bom）与新的维护面"
+      - option: "安卓电视盒子刷 Linux"
+        verdict: "成本最低但可靠性最差，不推荐用于无人值守场景"
+    explicit_prohibition: >
+      不要试图用一台 Android 手机当 subnet router：Tailscale 的 Android 客户端
+      不提供路由通告能力，只能作为普通节点。这是一个很容易想当然的坑。
+
+    setup_steps:
+      - "在选定节点上安装 Tailscale 客户端并登录同一 tailnet"
+      - "开启 IP 转发：net.ipv4.ip_forward=1（Linux）"
+      - "通告本网段：tailscale up --advertise-routes=<LAN CIDR>"
+      - "在 admin console → Machines → 该节点 → Edit route settings 中批准路由（此步最常被漏掉）"
+      - "从控制端用 ESP32 的**局域网 IP** 直连（例如 http://192.168.1.50），目标端无需任何改动"
+      - "在 ACL 中限制仅指定控制端主机可访问该子网"
+
+    gotchas:
+      accept_routes_asymmetry: >
+        【坑 1】--accept-routes 的平台默认值不对称：Windows / Android / iOS / macOS(App Store) 默认 true，
+        而 Linux 上的 tailscaled 默认为 false。典型症状是"手机能连、电脑连不上"。
+        本项目控制端是 Windows 因此无碍；但排障时若换用 Linux 客户端，必须补 tailscale set --accept-routes。
+      snat_default: >
+        【坑 2】--snat-subnet-routes 默认为 true，局域网侧设备看到的源 IP 是 subnet router 的地址。
+        这正是 ESP32 无需任何回程路由就能应答的原因。**MVP 必须保持默认 true**，
+        不要为了"日志里看到真实来源 IP"关掉它 —— 关闭后需要为 100.64.0.0/10 配置回程静态路由，
+        而 ESP32 根本没有能力配合这件事。
+      key_expiry: >
+        【坑 3】Tailscale 节点密钥默认有过期时间，到期后节点静默掉出 tailnet，
+        表现为"部署三个月后某天突然连不上"，且现场看不出任何异常。
+        必须对 subnet router 关闭 key expiry，或改用 tag（tag 默认禁用过期）。
+        这一条应写进部署检查清单，而不是等它发生。
+      no_default_route: "【坑 4】不要通告 0.0.0.0/0 —— 那是 exit node 的用途，会引发非预期的全网流量"
+
+    failure_mode_note: >
+      subnet router 本身是一个新增的单点故障。运维上要能区分两种"远程不可用"：
+      一种是 ESP32 挂了，一种是 router 挂了。两者现象相同但处置完全不同。
+      建议在控制端 health 面板里保留一条"能否 ping 通 router 的 tailscale IP"作为判别分支。
+    consistency_note: >
+      network.server_required 仍为 false：subnet router 是本地网络的网关延伸，
+      不承载业务、不引入云端服务。但它确实新增了本地常开依赖，已在 risk_register 登记。
+
+    fallback_if_no_always_on_node:
+      condition: "当且仅当现场凑不出任何常开节点时"
+      structural_alternative: >
+        把拓扑从"入站可达"改成"出站连接"：令 ESP32 作为 WebSocket 客户端主动连一台公网跳板
+        （VPS / frp 服务端），控制端也连同一跳板。这样无需常开本地节点。
+      why_lowest_priority: "代价是引入一台公网服务器，破坏了 server_required=false 的设计约束，
+        同时把控制权暴露给第三方主机。仅作为兜底，不作为计划路径。"
+
+  bandwidth_headroom: "需满足 video.bandwidth 的持续 1.2-3.0 Mbps，中继路径要留 2 倍余量"
+
+# ------------------------------------------------------------
+# 可扩展性 —— subnet router 要求的代价、三难困境与出路
+# ------------------------------------------------------------
+scalability:
+  status: "RESOLVED — 2026-09-28 用户明确：以「开源分发 / 大规模异地部署」为目标"
+  concern: >
+    subnet router 不是"配置繁琐一点"，而是**每站点一次的人工部署步骤**：
+    开源分发时每个使用者都得自己找一台常开节点并配置路由通告；
+    大规模异地部署时是 N 个站点的 N 次现场配置，且每次配置都可能踩到
+    network.esp32_access.gotchas 里的四个坑之一。这确实不友好，
+    它是"零服务器 + 零公网暴露"这两个约束换来的代价，不是疏忽。
+
+  trilemma:
+    principle: "零服务器 / 零公网暴露 / 部署友好 —— 三者最多取二，不可兼得"
+    current_choice:
+      pick: "零服务器 + 零公网暴露"
+      price: "需要现场常开节点（subnet router）"
+    alternative_a:
+      pick: "零服务器 + 部署友好"
+      price: "放弃 public_exposure=false，改为 IPv6 直连或端口映射"
+    alternative_b:
+      pick: "零公网暴露 + 部署友好"
+      price: "放弃 server_required=false，引入云中转 / MQTT broker / 跳板"
+    note: >
+      这三条边覆盖了所有可能，不存在第四种组合。因此"既要又不要"的诉求
+      在架构上无解，只能先决定放弃哪一项。
+
+  why_esp32_cannot_just_run_a_client: >
+    最容易想到的解法是"给 ESP32 装个隧道客户端"，但这条路比看起来窄：
+    社区确有基于 mbedTLS 的 ESP-IDF WireGuard 移植，能跑通加密与隧道封装；
+    然而 WireGuard 只解决数据面，不解决三个前提 —— 对端 endpoint 要稳定可达
+    （家庭宽带 IP 会变）、对称 NAT 需要中继、密钥与节点信息需要分发。
+    这三件事正是 Tailscale 控制面在做的事，而 ESP32 扛不住完整的 tailscaled。
+    结论：能跑 WireGuard ≠ 能自组一张可漫游的网。
+
+  underrated_option_ipv6:
+    summary: >
+      IPv6 是三难困境里最被低估的一条边：若两端都有全球单播地址，
+      ESP32（lwIP 支持 IPv6）可以直接被访问，无需 VPN、无需常开节点、无需服务器。
+    caveats:
+      - "家庭路由默认常开 IPv6 防火墙，入站仍需放行一条规则（仍属公网暴露）"
+      - "运营商前缀会轮换，地址变化需要 DDNS 或上报机制配合"
+      - "一旦公网可达，security.mvp_minimum 的强度就不够了：token 鉴权需升级，并补速率限制与失败锁定"
+    verdict: "作为可选 backend 值得留位，但不适合作为唯一默认路径"
+
+  recommended_direction:
+    principle: >
+      开源友好 ≠ 替所有人选一种网络方案，而是**把网络层做成可插拔的传输抽象**，
+      让部署者按现场条件选，上层（HTTP API / 标定 / 换算 / UI）完全不感知。
+    transport_backends:
+      - backend: "lan_direct"
+        when: "同网段或已部署 subnet router（当前默认）"
+        cost: "零服务器、零暴露；代价是需常开节点"
+      - backend: "ipv6_direct"
+        when: "两端均有全球单播 IPv6 且已放行入站"
+        cost: "零服务器、零常开节点；代价是公网暴露"
+      - backend: "outbound_relay"
+        when: "现场凑不出常开节点，ESP32 主动出站连 broker / 跳板"
+        cost: "零常开节点、可不经公网暴露（取决于 broker 位置）；代价是需要服务器"
+    interface_boundary: >
+      抽象应只暴露三个能力：connect / send_command / stream_frames，
+      外加一个 report_endpoint（上报自身可达地址）。这样新增 backend 不动上层。
+    milestone_impact: >
+      若在 MVP 前就做抽象，会拖慢 M1-M2；更稳妥的是 MVP 先只实现 lan_direct，
+      但**在代码结构上预留 backend 接口**，避免日后重构。此决策应早于 step_9（HTTP API）落地。
+
+  tailscale_specific_scale_tip: >
+    即使继续走 subnet router，规模化时也不要逐台授权：
+    用 Tailscale **tag + ACL 规则**批量放行，而不是给每台节点单独授权。
+    tag 恰好还默认禁用 key expiry，与 R14 的缓解措施同向。
+
+  decision: >
+    2026-09-28 已定：以「开源分发 / 大规模异地部署」为目标。
+    据此在三难困境中明确取舍 —— **放弃「零服务器」，保住「零公网暴露 + 部署友好」**。
+
+  selected_path:
+    choice: "三难困境的 B 边：零公网暴露 + 部署友好"
+    rationale: >
+      大规模部署的本质诉求是「一个中心管 N 个站点」，而只有设备主动出站到中心
+      才能做到零现场配置（无 IPv6 依赖、无常开节点依赖、无端口映射）；
+      同时设备仍是主动出站方，自身不暴露在公网，public_exposure=false 得以保留。
+      在三条边里，这是对"部署友好"代价最小、且唯一能天然支持集中管理的方案。
+    backend_priority:
+      - rank: 1
+        backend: "outbound_relay"
+        role: "默认路径"
+        note: "设备主动出站连 broker；零现场配置、天然支持 N 台集中管理。代价是需要一个 broker"
+      - rank: 2
+        backend: "ipv6_direct"
+        role: "面向不想自建 broker 的个人用户"
+        note: "两端有全球单播 IPv6 且放行入站时可用；零服务器，但公网暴露，需强化鉴权"
+      - rank: 3
+        backend: "lan_direct"
+        role: "开发调试 / 已部署 subnet router 的既有站点"
+        note: "保留为可选项，不再是默认"
+    subnet_router_status: >
+      降级为 lan_direct 后端下的一种实现，不再是必选项。
+      network.esp32_access 全节内容仍然有效，但仅作为该后端的部署指南。
+    auto_selection_rule: >
+      启动时按 lan_direct → ipv6_direct → outbound_relay 的成本从低到高探测可行性？
+      不 —— 反向更合理：优先尝试最"轻依赖"的 ipv6_direct（若已启用且入站可达），
+      否则回落已配置的 outbound_relay；lan_direct 仅在未配置 broker 时用于本地。
+      探测必须由控制端发起并给出明确诊断，不能让设备静默切换（否则排障无从下手）。
+
+  deployment_at_scale_requirements:
+    premise: >
+      目标改为大规模部署后，真正的瓶颈从"网络怎么打通"转移到了"设备怎么管"。
+      以下六项在 MVP 现有设计中均不成立或明显不足，是本次目标变更的主要连带工作量。
+    provisioning:
+      gap: "MVP 假设 WiFi 凭据已知（手动配网/硬编码），100 台时不可行"
+      requirement: "零接触配网：ESP-IDF wifi_provisioning（SoftAP 或 BLE + protocomm 安全通道），由控制端扫码/配网页下发凭据"
+    device_identity:
+      gap: "security.mvp_minimum 是『静态 token，串口输出一次人工录入』，且多设备可能复用同一 token"
+      requirement: >
+        每设备唯一身份与凭据，烧录时注入或首次启动时生成并安全导出；
+        禁止全网共用 token。broker 侧按 device_id 做 ACL 隔离。
+    registry_and_discovery:
+      gap: "现有设计靠人记住每台 ESP32 的 IP；大规模下必须有注册表"
+      requirement: "设备上线即向 broker 注册（含 device_id / 能力 / 版本），下线用 LWT 标记；控制端从注册表取设备列表"
+    ota:
+      gap: "security.mvp_minimum 中『未使用 OTA 则其代码路径保持禁用』，MVP 走串口烧录"
+      requirement: "大规模下 OTA 从可选项变为必选项，且必须签名校验；需按批次灰度与回滚能力"
+    calibration_for_end_users:
+      gap: "9 点人工标定对个人用户门槛过高，是开源分发 adoption 的主要障碍"
+      requirement: >
+        一键自动标定：由 ESP32 提供一个全屏标定网格页面，用 Y71t 自带浏览器打开后
+        全屏显示；ESP32 拍一帧，自动检测网格交点（CAP 坐标由图像得到，SCR 坐标由网格定义已知），
+        直接求解 H 并跑留一残差自检。无需人工点 9 次，也无需在被控端装 App。
+      feasibility_note: "Y71t 可通过局域网访问 ESP32 的 HTTP 服务，此方案不违反 non_goals（不装 App、不依赖 ADB）"
+    board_and_optics_matrix:
+      gap: "hardware.pinout 目前是单一参考，摄像头镜头视场还要求现场反推"
+      requirement: >
+        板级配置外置为 build-time profile（不同 ESP32-S3 载板 / 摄像头模组），
+        并对已验证组合提供预置的 pinout 与推荐工作距离，减少现场试错。
+    licensing:
+      gap: "tech_stack.libraries 中第三方依赖（如 Autfy/ESP32-BLE-HID）的许可证未确认"
+      requirement: >
+        开源分发前必须完成依赖许可证清点并确认与项目许可证兼容；
+        同时把描述符规格固化在本文件内（R1 已有此要求），降低对上游库的硬依赖。
+    broker_hosting_decision: >
+      2026-09-28 已定：**项目方提供 broker**（官方托管实例），用户开箱即用。
+      由此引出的架构、合规与信任问题见顶层章节 broker_service，此处不再展开。
+
+# ------------------------------------------------------------
+# Broker 服务 —— 项目方托管模式下的架构、信任与合规约束
+# ------------------------------------------------------------
+broker_service:
+  status: "RESOLVED — 2026-09-28 用户决定：由项目方提供 broker"
+  decision: "项目方运营官方托管实例，用户开箱即用，无需自建"
+
+  reference_model: >
+    采用 Matrix / Synapse 那种结构：**开源协议 + 开源服务器实现 + 官方托管实例 + 允许自托管**。
+    这样"官方托管"是便利而不是锁定 —— 这是本项目区别于它本来要反对的厂商云的关键。
+
+  the_new_problem: >
+    项目方一旦运营 broker，就立刻获得一项此前不存在的能力：
+    **可以看到每一个用户的手机屏幕内容，并可以向任意设备下发指令**。
+    这与 security.threat_model 里"资产价值极高"的判断叠加后，
+    是本决策引入的最大问题 —— 它不是运维问题，是信任问题。
+
+  three_preconditions:
+    note: "官方托管要成立，必须同时满足以下三条；缺任何一条都不如让用户自建"
+    p1_e2e_encryption:
+      requirement: "端到端加密：broker 只转发密文，永远无法解密"
+      key_exchange: "密钥带外交换 —— 配网时由控制端生成随机 PSK，经 BLE provisioning 安全通道或扫码注入设备；禁止经由 broker 传递密钥"
+      cipher: "视频与指令统一用 AEAD（AES-256-GCM 或 ChaCha20-Poly1305），会话密钥可轮换"
+      esp32_feasibility: >
+        ESP32-S3 有 AES / SHA / RSA / ECC 硬件加速，mbedTLS 可直接利用，
+        1-3 Mbps 的 AEAD 开销可接受。但**必须实测**：这项开销会与 R5 的共存压测叠加，
+        需并入 tech_stack.coexistence.acceptance_test 一并评估。
+      accepted_constraint: "加密后 broker 无法转码、无法生成缩略图、无法录制 —— 这是必须接受的设计约束"
+    p2_self_host_first_class:
+      requirement: "自托管是一等公民，官方实例只是可选项"
+      why: >
+        否则项目就变成了它本来要反对的东西：官方一停服，所有设备变砖，
+        这正是 v1.4 评估厂商云时给出的负面理由。开源的意义在于用户随时可以搬走。
+      implementation: "broker 自身必须开源且提供一键部署（docker-compose），并与官方实例协议完全兼容"
+    p3_sustainable_ops:
+      requirement: "成本与合规可持续，否则服务不可信"
+      see: "broker_service.economics 与 broker_service.compliance"
+
+  architecture_refinement:
+    status: "CONFIRMED — 2026-09-28 用户确认；详细设计见 broker_service.transport_architecture"
+    problem: >
+      v1.5 把默认后端定义为 outbound_relay（设备主动出站到 broker）。
+      若所有流量都过 broker，则带宽成本与信任风险同时被放大。
+    refinement: >
+      把 broker 的角色细化为 **信令服务器 + 中继兜底**，而不是全量中转：
+      设备仍主动出站注册到信令服务（保持 outbound 特性与零现场配置），
+      但数据流优先走 P2P（ipv6_direct 或打洞成功时），仅在打洞失败时由 broker 中继。
+    reference: "这与 WebRTC 的 signaling + TURN 结构是同一个模型"
+    benefit: >
+      同时解决两件事：带宽成本大幅下降（broker 多数时候只承载信令），
+      且即便走中继，broker 拿到的也是 E2E 密文 —— 成本与信任同时收敛。
+
+  transport_architecture:
+    status: "CONFIRMED（v1.7）—— 架构结论保留"
+    v1_8_status: >
+      PARKED。按 execution_policy「跑通第一」，本节的实施（P2P 优先 / 三级降级）
+      推迟到端到端链路跑通之后；MVP 期间走 execution_policy.mvp_transport_decision
+      定义的全量中转。架构结论本身不撤销，仅在跑通后启用。
+    core_split:
+      principle: "按流量特性分流，而不是让所有流量走同一条路"
+      commands:
+        path: "控制端 → broker → ESP32（始终经 broker）"
+        why: "指令是几十字节级，带宽成本可忽略，但必须可靠送达 —— 走 broker 的 TCP 长连接天然可靠"
+      video:
+        path: "控制端 ←→ ESP32（P2P 直连优先）"
+        why: "视频是 Mbps 级，占几乎全部带宽；且 MJPEG 每帧独立，可容忍丢帧 —— 适合走 P2P"
+      note: "E2E 加密对两条路径都适用；broker 转发的是指令密文，中继时转发的是视频密文"
+
+    three_tier_fallback:
+      - tier: 1
+        path: "IPv6 直连"
+        why_first: "无 NAT，两端有全球单播地址即可直达，成功率接近 100%，且零服务器流量"
+        precondition: "两端均具备 IPv6，且家庭路由已放行入站（这是唯一需要现场配置的一项）"
+      - tier: 2
+        path: "IPv4 UDP 打洞（P2P）"
+        how: "broker 交换双方公网 endpoint，双方同时互发 UDP 探测包建立 NAT 映射"
+        caveat: "家宽 CGNAT / 对称 NAT 下成功率下降，见 transport_architecture.nat_reality"
+      - tier: 3
+        path: "broker 中继"
+        when: "打洞失败"
+        note: "此时仍走 E2E 密文，broker 只做转发 —— 这是中继能被接受的前提"
+
+    session_flow:
+      - step: 1
+        desc: "ESP32 开机后主动出站，与 broker 建立 TCP 长连接并注册 device_id（零现场配置的来源）"
+      - step: 2
+        desc: "控制端同样连 broker，从注册表取得设备列表与在线状态（LWT 标记离线）"
+      - step: 3
+        desc: "控制端请求接入某设备；broker 交换双方的公网 endpoint（IPv6 地址 + IPv4:port）"
+      - step: 4
+        desc: "优先尝试 IPv6 直连；不可用时双方同时互发 UDP 探测做 IPv4 打洞"
+      - step: 5
+        desc: "探测成功即建立 P2P 视频通道，并向控制端上报当前实际路径（供诊断）"
+      - step: 6
+        desc: "失败则回落 broker 中继，并在健康面板标明『当前为中继路径』"
+
+    session_keepalive: "NAT 映射有超时（通常数十秒到数分钟），需定期 keepalive 维持，否则通道静默失效"
+    session_diagnostic_rule: >
+      路径选择必须由控制端显式上报，禁止设备端静默切换 ——
+      否则"画面变卡"会被误诊为摄像头或 WiFi 问题，而不是"其实走了中继"
+
+    udp_fragmentation:
+      problem: >
+        现有图传是 MJPEG over WebSocket（TCP）。改走 P2P 后需用 UDP，
+        而 VGA 单帧 JPEG 常在 20-60 KB，远超 MTU，必须分片。
+        JPEG 不可部分解码，**丢任意一个分片则整帧报废**。
+      quantification: >
+        单帧 15 KB（约 12 个分片）在 0.5% 丢包下整帧存活率约 94%；
+        单帧 40 KB（约 33 个分片）在同等丢包下存活率降至约 85%。
+        所以单帧大小直接决定有效帧率，不是线性的。
+      why_tolerable: >
+        MJPEG 每帧独立、无帧间依赖，丢帧只表现为帧率下降，不会花屏或累积错误 ——
+        这正好适配 UDP 的不可靠语义，是本方案能成立的关键。
+      engineering_constraints:
+        - "分片 payload 对齐 MTU（约 1200 字节），避免 IP 层再分片"
+        - "P2P 路径下主动压低单帧大小（降 quality / 降分辨率），把有效帧率换回来"
+        - "带 seq 与帧号，接收侧整帧缺片即丢弃，不做重传（重传对实时视频无意义）"
+        - "控制指令绝不走这条不可靠通道，始终走 broker"
+
+    nat_reality:
+      warning: >
+        **必须诚实修正对 P2P 成功率的预期**：中国家庭宽带 IPv4 相当比例处于
+        运营商级 NAT（CGNAT）之下，对称 NAT 场景 UDP 打洞会失败。
+        因此"带宽成本大幅下降"是有条件的，不是必然结果。
+      consequences:
+        - "IPv6 的价值因此上升 —— 它才是真正稳定的零中继路径，而非 IPv4 打洞"
+        - "中继比例可能显著高于乐观估计，broker_service.economics 的估算需保留余量"
+        - "成本规划应按『部分用户走中继』建模，而不是假设中继是极少数"
+      measurement_required: >
+        这一项无法靠桌面推算收敛：需在真实家宽 / 4G 环境下统计打洞成功率与中继占比，
+        并据此修订成本模型。应作为 M4 之后的专项测量项。
+
+    relations:
+      - "与 R16（broker 单点故障）：P2P 优先降低了 broker 的带宽压力，但没有消除单点 —— 信令仍依赖它"
+      - "与 R21（打洞成功率）：本节的乐观预期由其约束"
+      - "与 R5（BLE/WiFi 共存）：新增 UDP 收发会改变 WiFi 侧负载特征，需并入 1 小时压测"
+
+  economics:
+    traffic_model: >
+      按 2 Mbps、控制端按需拉流估算，单设备约 0.9 GB/小时。
+      若官方实例承接 100 个日活（每天 1 小时）≈ 2.6 TB/月；
+      1000 个日活 ≈ 26 TB/月。按国内云流量 0.5-1 元/GB 计，
+      后者约 **¥1.3 万-2.6 万/月**，这是持续支出而非一次性成本。
+    mitigations:
+      - "严格执行按需拉流（reliability 已有此设计），禁止 24h 常推"
+      - "按 architecture_refinement 让 P2P 承担主要流量，broker 只做信令与兜底"
+      - "免费额度 + 超出限流；或按设备数/流量分级"
+      - "探索赞助 / 付费订阅 / 企业私有部署三条收入线"
+    warning: >
+      带宽是唯一随用户数线性增长且无法靠优化消除的成本。
+      在商业模式未定之前，不应承诺"永久免费无限流量"。
+
+  compliance:
+    items:
+      - "服务器在中国境内运营需 ICP 备案；使用国内云必须先解决这个问题"
+      - "传输内容包含用户手机屏幕，属个人信息，触发《个人信息保护法》相关义务：
+         需明确告知、最小必要、留存期限与删除机制"
+      - "需提供隐私政策与服务条款，并说明 broker 看不到明文（E2E 是合规叙事的核心）"
+      - "境外部署可暂缓备案，但延迟与合规地都要重新评估"
+    note: "合规不是上线前补一份文档的事，它会反向约束架构（例如日志不能留存可识别内容）"
+
+  public_exposure_effect: >
+    network.public_exposure 仍保持 false —— 设备自身不在公网暴露。
+    但需新增一项认知：**数据暴露给了项目方**。因此本决策等价于
+    把"零公网暴露"替换为"零公网暴露 + 信任项目方"，而这个信任必须靠
+    p1_e2e_encryption 在技术上削弱，而不是靠声明。
+
+  open_items:
+    - "官方实例的地域（境内需备案 vs 境外延迟）"
+    - "商业模式与免费额度"
+    - "SLA 目标与停服预案（必须提前公告迁移路径，且自托管始终可用）"
+    - "broker 实现的开源许可证与贡献流程"
+
+# ------------------------------------------------------------
+# 安全与访问控制 —— 内网不等于安全
+# ------------------------------------------------------------
+security:
+  threat_model: >
+    本系统的资产价值很高：控制端等价于持有 Y71t 的完整操作权
+    （可见屏幕内容 + 可点击 + 可输入）。
+    任何人只要能访问 ESP32 的 HTTP API，就获得了同样的能力。
+
+  # v1.6 新增：按"谁能造成什么后果"列主体，而不是只按攻击手法列
+  threat_actors:
+    - actor: "能访问 ESP32 HTTP API 的任何人"
+      capability: "完整控制权（看屏 + 点击 + 输入）"
+    - actor: "broker 运营方（v1.6 起为项目方自身）"
+      capability: >
+        若不加密，可读取所有用户的屏幕流并向任意设备下发指令。
+        这是"项目方提供 broker"这一决策引入的新主体，
+        也是本项目迄今集中度最高的风险 —— 详见 broker_service.the_new_problem。
+      mitigation: "端到端加密（broker_service.three_preconditions.p1_e2e_encryption）"
+    - actor: "持有设备物理访问权的人"
+      capability: "等同完全控制（BLE 配对凭据在 ESP32 侧）"
+
+  layers:
+    network:
+      measure: "Tailscale ACL 白名单，仅允许指定 Win10 主机访问 ESP32 的 80 端口"
+      note: "不要依赖『反正在内网』这种假设"
+    application:
+      measure: "HTTP/WS 均需鉴权；MVP 至少实现静态 token"
+      v1_6_note: >
+        v1.6 起该条只是下限，不再足够：需升级为每设备唯一凭据 + 端到端加密
+        （broker 只转发密文），密钥带外交换而非经 broker 传递。
+        详见 broker_service.three_preconditions.p1_e2e_encryption 与 R17 / R20。
+      rule: "禁止明文口令硬编码写死在固件源码并进 Git"
+      suggested_flow: "首次启动在 NVS 生成随机 token，从串口输出一次，人工录入控制端"
+    firmware_update:
+      measure: "OTA 需校验签名，禁止未签名固件刷入"
+      note: "MVP 阶段可直接禁用 OTA，走串口烧录，减少攻击面"
+    physical:
+      measure: "拿到 ESP32 硬件 ≈ 拿到全部控制权"
+      note: "设备不应部署在不可信物理环境中"
+    bluetooth:
+      measure: "BLE HID 配对凭据保存在 ESP32 侧，Y71t 会信任持有该身份的设备"
+      note: "风险可接受，但需知悉：换板子后 Y71t 需重新配对"
+    logging:
+      measure: "串口日志不得输出 token / PSK / 配对密钥"
+      note: "排障时临时开启，交付前关闭"
+
+  mvp_minimum:
+    - "Tailscale ACL 限制来源主机"
+    - "HTTP/WS token 鉴权"
+    - "串口日志脱敏"
+    - "未使用 OTA 则其代码路径保持禁用"
+
+# ------------------------------------------------------------
+controller:
+  platform: "Windows 10"
+  ui: "浏览器 (Chrome/Edge) 或本地 Python UI"
+  display: "canvas 显示 MJPEG 流"
+  controls: "虚拟键盘 + 鼠标/触控 + 预设按钮 (Home/Back/Swipe)"
+  backend: "MVP：控制端连 broker（project-operated）中转 → ESP32 本地 HTTP/WS API；broker 仅透传不解包"
+  no_external_server: true
+  backend_note: >
+    no_external_server 指不依赖任何第三方/外部云服务；broker 为项目方自建（first-party），
+    等价于「零外部云依赖」。LAN-direct（控制端直连 ESP32 IP）保留为可选部署形态。
+
+  # --- UI 必须承担的标定职责 ---
+  calibration_ui:
+    required: true
+    features:
+      - "标定模式开关：叠加 3x3 网格指引层"
+      - "逐点采集点击并形成 (CAP, SCR) 样本表"
+      - "实时显示拟合残差，超阈值高亮该点要求重采"
+      - "标定结果落盘 JSON（按 device_id 分 profile），支持导入导出"
+    coordinate_display: "鼠标悬停时实时显示当前 CAP 坐标及换算后的 SCR 预测坐标"
+    decision: "MVP 做 Win10 本地页面（算力与调试便利），ESP32 仅保留最小状态页"
+
+  coordinate_mapper_module:
+    location: "Win10 客户端（MVP 决策，见 coordinate_mapping.runtime_placement）"
+    responsibility: "持有 H 矩阵，执行 CAP→SCR→HID 全链路换算，向 ESP32 下发 HID 结果"
+    interface: "Win10: map(cap_xy) -> hid_xy；ESP32 侧仅负责把 HID 值打包成 BLE 报告"
+
+  health_panel:
+    required: true
+    source: "GET /api/v1/health"
+    fields: "uptime / heap / free_psram / chip_temp / fps / wifi_rssi / ble_connected"
+    purpose: "长跑排查的第一步永远是先看健康面板"
+
+# ------------------------------------------------------------
+# 可靠性 —— automation.focus 明确写了稳定性测试，但缺少对应设计
+# ------------------------------------------------------------
+reliability:
+  target: "7×24 无人工干预；MVP 阶段先通过 72 小时 soak test"
+
+  watchdog:
+    enabled: true
+    hardware_wdt: "启用任务看门狗，超时阈值 8s"
+    policy: "优先重启单个任务（camera task / http task），多次无效再整机重启"
+    reason: "整机重启会丢一次链路状态，排障时反而更难定位"
+
+  reconnect:
+    wifi: "断线自动重连，指数退避，连续失败达阈值后重启网络栈"
+    ble: "Y71t 断开后恢复广播；连续重连失败则重置 BLE 栈"
+    order: "先恢复 WiFi 再恢复 BLE：图传是判断状态的前提"
+
+  degradation_ladder:
+    note: "资源紧张时按此顺序降级，不要一步到位停机"
+    steps:
+      - "降低 MJPEG 帧率"
+      - "降低 JPEG 画质"
+      - "降低分辨率 VGA → QVGA"
+      - "暂停图传，仅保留控制通路"
+      - "最后才整机重启"
+
+  health_reporting:
+    endpoint: "GET /api/v1/health"
+    interval_ms: "由控制端按需拉取，ESP32 端不主动推送以免加重负载"
+    must_include: "last_reset_reason —— 用于区分看门狗重启、欠压重启、panic"
+
+  crash_diagnostics:
+    - "保留 panic handler 输出到串口"
+    - "记录最后 N 次 reset reason 到 RTC memory / NVS"
+    - "建议初期保留串口日志采集，定位稳定后再断开"
+
+  anti_brownout: "电源端并联电容，见 hardware.power.brownout_risk"
+
+  soak_test:
+    duration_h: 72
+    workload: "以 5s 间隔循环执行 UC1"
+    pass_criteria: "无失联、无累计漂移、堆内存无单调下降趋势"
+    fail_action: "记录 heap/uptime/reset_reason 曲线后复盘，不允许直接重启了事"
+
+# ------------------------------------------------------------
+automation:
+  use_case_count: "5（见 use_cases）"
+  focus: "功能验证 + 稳定性测试"
+  framework: "Python 脚本 (pytest optional)"
+  execution: "Win10 本地 Python → HTTP/WS 指令 → ESP32 → BLE HID → Y71t"
+  assertions: "截图存盘 + 人眼/简单图像比对 (不做 OCR)"
+  ci_integration: false
+  parallel_devices: false
+  recovery_on_failure: "人工介入 (本期不做自动恢复)"
+
+  evidence_policy: >
+    每次运行必须落盘：原始帧 + 指令序列 + 时间戳 + 期望/实测结果。
+    没有证据的运行等于没跑，也不利于回溯漂移类问题。
+
+  # --- 坐标链路专项断言 ---
+  coordinate_assertions:
+    required: true
+    cases:
+      - "标定自检：加载 H 后重投影 9 个标定点，全部残差落在 error_budget 范围内"
+      - "点击回环：对已知目标点发 tap，拉回新帧做人眼/图像比对确认命中"
+      - "漂移观测：连续 20 次 tap 同一目标，记录偏差序列，确认无单调漂移（relative 模式必测）"
+      - "边界测试：点击屏幕边缘区域，确认误差仍在 acceptance.edge 范围内"
+    artifact: "每次断言保存原始帧 + 期望坐标 + 实测坐标三元组，便于离线复盘"
+    note: "此类断言属坐标链路体检，应与业务用例脚本分开独立运行"
+
+# ------------------------------------------------------------
+extensibility:
+  multi_device:
+    supported: true
+    method: "每台 ESP32 分配 device_id，Win10 客户端做设备列表切换"
+    network: "同一 Tailscale 网络下通过 hostname/IP 区分"
+    per_device_calibration: true
+    calibration_profile: >
+      每台 Y71t/摄像头组合的安装几何都不同，标定矩阵不可跨设备复用。
+      需按 device_id 建立独立 calibration profile，切换设备时同步切换 H 矩阵。
+
+  physical_keys_future:
+    gpio_reserved: true
+    relay_compatible: true
+    fingerbot_compatible: true
+    motivation: "补上黑屏/死机时的最后手段：物理按电源键与音量键"
+
+  usb_otg_future:
+    code_reserved: true
+    validation_required: "验证 Y71t 是否接受 ESP32 为 USB HID 设备"
+
+# ------------------------------------------------------------
+non_goals:
+  - "不采 HDMI/DP (Y71t 无视频输出)"
+  - "不装 APP / 不依赖 ADB 主控"
+  - "不做 OCR / AI 视觉"
+  - "不录制视频"
+  - "不控 Recovery / 强制重启 (本期)"
+  - "不裸公网暴露"
+  - "不追求低延迟"
+  - "不买 NanoKVM / Comet Q / PiKVM (自研 ESP32 方案)"
+  - "不做企业级多用户管理"
+  - "不做全自动标定 (MVP 采用人工点击 9 点的方式)"
+  - "不做相机内参标定与逐点 pixel-perfect 畸变建模 (单应矩阵够用即可)"
+  - "不做美颜/画质增强类图像处理 (FOV 就是所见即所得)"
+
+# ------------------------------------------------------------
+tech_stack:
+  platform: "ESP-IDF 5.x 或 Arduino-ESP32 3.x"
+  language: "C/C++ (ESP32 固件) + Python (Win10 控制端)"
+  decision: "MVP 用 Arduino-ESP32 3.x：CameraWebServer 与 BLE 库现成，跑通优先"
+
+  coexistence:
+    status: "RESOLVED (desk) — 原理成立且有官方背书；风险已从『能不能』降级为『稳态 QoS』"
+    conclusion: >
+      【Q3 结案】ESP32-S3 只有一套 2.4GHz 射频，WiFi 与 BLE 通过时分复用共享。
+      关键在于：Espressif 官方共存矩阵中，Wi-Fi STA Connected + BLE Connected
+      这一格明确标注为 Y（supported，performance is stable），
+      且文档写明在该共存方案下，一个共存周期内 WiFi 与 BLE **各占约 50% 时间片**。
+      这说明"同时跑"是被官方支持的常态组合，而非 hack。
+      所以真正需要验证的从来不是"会不会冲突"，而是"两边各分到的一半资源够不够用"。
+    official_source: "https://docs.espressif.com/projects/esp-idf/en/release-v5.0/esp32s3/api-guides/coexist.html"
+    why_the_library_is_not_the_risk: >
+      Autfy/ESP32-BLE-HID 的 README 明示支持 Wi-Fi 并行并提供了验证示例，
+      但这只能证明"能同时连上"，不能证明"稳态 QoS 达标"——后者必须自己压测。
+
+    memory_contention:
+      warning: >
+        容易被忽略的第二条竞争线不是射频，而是**内存与总线带宽**。
+        camera 的 frame buffer 走 PSRAM 且由 DMA 搬运，WiFi 的 TX buffer 也要吃 PSRAM 带宽，
+        两者叠加时真正的瓶颈可能在这，而不是 2.4GHz 时隙。
+        压测时必须同时看 heap 最低水位与帧率，不要只看"有没有断连"。
+
+    tuning_knobs:
+      ble_stack_choice:
+        recommendation: "优先评估切到 NimBLE"
+        reason: "NimBLE 约 50KB RAM，Bluedroid 约 110KB；本项目同时跑 camera + WiFi + MJPEG，内存是最紧的资源"
+        unresolved: >
+          Autfy/ESP32-BLE-HID 基于 T-vK 系列，通常默认走 Bluedroid（Arduino-ESP32 的默认栈）。
+          能否无痛切到 NimBLE 需要实测确认；若不能，则必须接受 Bluedroid 的开销并相应收紧 fps 与画质预算。
+          （这是 v1.4 新开出的一项实测项，但不阻塞 M2，因为它影响的是余量而非可行性。）
+      task_pinning:
+        recommendation: "把 WiFi 任务与 BT controller/host 任务分到不同 CPU 核"
+        rationale: "官方文档给出的共存性能优化建议；ESP32-S3 是双核，有条件执行"
+        knobs: "CONFIG_BT_CTRL_PINNED_TO_CORE_CHOICE / CONFIG_BT_NIMBLE_PINNED_TO_CORE_CHOICE + CONFIG_ESP_WIFI_TASK_CORE_ID"
+      coex_preference:
+        api: "esp_coex_preference_set()"
+        usage: "当视频与控制出现明显此消彼长时再调；MVP 保持 BALANCE，除非压测证明单侧优先更优"
+      connection_params:
+        api: "keyboard.setPreferredConnectionParams(min, max)"
+        tradeoff: >
+          connection interval 越小 HID 延迟越低，但 BLE 抢占 RF 越频繁，会压低 WiFi 吞吐。
+          这是本项目唯一一处"输入延迟"与"视频流畅"直接互为代价的地方，必须按实测定点，
+          不能照抄默认值。
+      mtu:
+        api: "keyboard.setMTU(185)"
+      avoid:
+        - "不要在 WiFi 正在连接/扫描期间反复启停 BLE 广播 —— 会导致广播间隔抖动，
+           表现为「手机有时搜不到、有时连不上」。这是共存场景最典型的疑难杂症。"
+
+    acceptance_test:
+      description: "把'没断连'升级为可量化的稳态指标；编译通过不算通过"
+      duration: "连续 1 小时"
+      load: "持续 MJPEG 推流 + 每 5 秒一条 HID 指令（混合 tap / swipe / key）"
+      metrics:
+        - "视频：帧率不低于目标值的 80%，无连续 3 秒以上的停流"
+        - "输入：HID 指令零丢失（对端计数核对），无超过 500ms 的响应尖刺"
+        - "链路：全程零 BLE 断连、零 WiFi 重连"
+        - "资源：heap 最低水位有安全余量，未见持续单向下降（防内存泄漏）"
+      judgement: "任一指标不达标，优先降 fps/画质而不是先怀疑 BLE"
+
+    degradation_path:
+      - "第一档：降 fps（15 → 10）与画质，给 BLE 让出时隙"
+      - "第二档：错峰 —— 在发送 HID 指令的短窗口内主动抑制取帧，
+         让 HID 独占几十毫秒。人的操作是间歇性的，这个代价几乎不可感知，是性价比最高的一招"
+      - "第三档：按需拉流 —— 仅在需要观察时推流，纯操作时段降到静态帧轮询"
+      - "不做：试图把两条链路分到不同频段 —— WiFi 2.4G 与 BLE 本就同处 2.4GHz，物理上无解，不必浪费时间尝试"
+
+  references:
+    ble_hid:
+      - name: "ESP32-BLE-Keyboard"
+        url: "https://github.com/T-vK/ESP32-BLE-Keyboard"
+        usage: "BLE 键盘 + 媒体键"
+        coordinate_mode: "键盘/媒体，不涉及坐标"
+      - name: "ESP32-BLE-Mouse"
+        url: "https://github.com/T-vK/ESP32-BLE-Mouse"
+        usage: "BLE 鼠标 (相对)"
+        coordinate_mode: "relative"
+      - name: "ESP32-BLE-Combo"
+        url: "https://github.com/peter-pakanun/ESP32-BLE-Combo"
+        usage: "键鼠二合一"
+        coordinate_mode: "relative"
+        status: "作为 Autfy 库的上游依赖，不建议单独使用"
+        warning: "单独使用不支持绝对坐标；仅支持相对鼠标，无法承载本方案的 tap/swipe"
+
+      - name: "ESP32-BLE-HID (asterics)"
+        url: "https://github.com/asterics/ESP32-BLE-HID"
+        status: "BROKEN — 2026-09-28 实测该 URL 返回 404，仓库疑似已删除或私有化"
+        note: "v1.1/v1.2 曾把它列为实现参考，现已作废。后续不要再引用此链接。"
+
+      - name: "ESP32-BLE-Abs-Mouse (sobrinho)"
+        url: "https://github.com/sobrinho/ESP32-BLE-Abs-Mouse"
+        usage: "绝对坐标触控，本方案描述符规格的来源"
+        coordinate_mode: "absolute"
+        key_specs: "Digitizer/Touch Screen 描述符；Report ID 0x01；5 字节报告；X/Y 各 16bit，Logical Max 10000；state 0x03=按下、0x00=抬起"
+        android: "README 明确标注 Compatible with Android"
+
+      - name: "ESP32-BLE-HID (Autfy)"
+        url: "https://github.com/Autfy/ESP32-BLE-HID"
+        selected: true
+        usage: "本项目首选：键盘 + 绝对坐标触控的复合 BLE HID 设备"
+        coordinate_mode: "absolute"
+        key_apis: "setScreenSize / setLogicalRange / setCalibrationOffset / sendAbsolutePixel / swipeLinear / swipeBezier"
+        why_selected:
+          - "键盘与绝对触控在同一连接上共存，同时支持 BACK/HOME/text 与 tap/swipe"
+          - "README 明确宣称可与 Wi-Fi 并行工作，提供 BLE HID + WiFi 验证示例，直击本方案的最大耦合风险"
+          - "已内置滑动轨迹插值与坐标偏移校正，与我们 residual_offset 的设计吻合"
+          - "已封装行式指令协议（TAP/SWIPE/BEZIER/TEXT/OFFSET/SET_SCREEN），可作为 ESP32 侧接口蓝本"
+        maintenance: "单作者项目，活跃更新至 2026-02；评估结论：可用，但需 fork 并锁定版本（见 risk R11）"
+        verified_on: "2026-09-28（URL 可达；README 内容与本文档引用一致）"
+        api_surface_note: >
+          除 coordinate 相关接口外，库还提供 setPreferredConnectionParams() 与 setMTU()，
+          这两项是 tech_stack.coexistence 里调节 BLE/WiFi 共存权衡的直接抓手。
+          编写固件时不要跳过它们。
+
+    coex_and_stack:
+      - name: "ESP-IDF RF Coexistence 指南 (ESP32-S3)"
+        url: "https://docs.espressif.com/projects/esp-idf/en/release-v5.0/esp32s3/api-guides/coexist.html"
+        usage: "WiFi + BLE 共存的权威依据：单射频时分复用、共存矩阵、周期与时隙划分、任务绑核建议"
+        key_fact: "Wi-Fi Connected + BLE Connected 标注为 Y（性能稳定），共存周期内各占约 50% 时隙"
+      - name: "NimBLE vs Bluedroid"
+        url: "https://github.com/apache/mynewt-nimble"
+        usage: "轻量 BLE host，RAM 占用约为 Bluedroid 的一半"
+        note: "是否可用于本项目的 HID 库需实测确认（见 tech_stack.coexistence.tuning_knobs.ble_stack_choice）"
+
+    networking_vpn:
+      - name: "Tailscale — 访问无法运行 Tailscale 的设备（subnet router）"
+        url: "https://tailscale.com/docs/use-cases/personal-or-at-home-use/access-devices-without-tailscale"
+        usage: "把本项目 ESP32 纳入 tailnet 的标准做法，含完整命令与路由批准步骤"
+      - name: "Tailscale — Subnet routers 参考"
+        url: "https://tailscale.com/kb/1019/subnets"
+        usage: "IP 转发、--advertise-routes、--accept-routes 平台差异、SNAT 默认行为"
+        key_fact: "--accept-routes 在 Linux tailscaled 上默认 false，在 Windows/macOS App Store/Android/iOS 上默认 true"
+
+    calibration:
+      - name: "OpenCV findHomography"
+        url: "https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html"
+        usage: "求解 SCR↔CAP 单应矩阵（推荐，自带 RANSAC 抗噪）"
+      - name: "numpy.linalg.lstsq"
+        url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.lstsq.html"
+        usage: "不引入 OpenCV 时手工求解 8 自由度 H"
+
+    camera:
+      - name: "esp32-camera"
+        url: "https://github.com/espressif/esp32-camera"
+        usage: "摄像头驱动 (Arduino-ESP32 已集成)"
+      - name: "CameraWebServer"
+        url: "Arduino-ESP32 examples/ESP32/Camera/CameraWebServer"
+        usage: "官方 MJPEG 图传示例，直接出流"
+
+    websocket:
+      - name: "ESPAsyncWebServer"
+        url: "https://github.com/me-no-dev/ESPAsyncWebServer"
+        usage: "ESP32 异步 HTTP/WS 服务"
+      - name: "arduino-websocket-client"
+        url: "https://github.com/Links2004/arduinoWebSockets"
+        usage: "WS 客户端 (如需 ESP32 主动连外部)"
+
+    network:
+      - name: "Tailscale"
+        url: "https://tailscale.com"
+        usage: "P2P VPN；ESP32 侧建议走 subnet router 接入"
+      - name: "WireGuard"
+        url: "https://www.wireguard.com"
+        usage: "备选 VPN"
+
+    control_client:
+      - name: "Python websockets"
+        url: "https://github.com/python-websockets/websockets"
+        usage: "Win10 Python 脚本与 ESP32 WS 通信"
+      - name: "PyQt6 / tkinter"
+        url: "https://doc.qt.io/qtforpython/"
+        usage: "可选本地 GUI 客户端"
+
+# ------------------------------------------------------------
+# 风险登记 —— v1.4 起改为「按主题相邻」排列（同源风险放在一起便于复盘），
+# 风险等级改由每条 level 字段显式标注。每条都要有触发条件与兜底。
+# ------------------------------------------------------------
+risk_register:
+  - id: "R1"
+    risk: "Y71t / Android 11 不接受第三方 BLE 绝对坐标报告"
+    level: "MEDIUM（原 HIGH，2026-09-28 下调）"
+    trigger: "M2 兼容性冒烟"
+    why_downgraded: >
+      桌面调研已闭环：绝对坐标在 Android 上可行，前提是走 Digitizer 触摸屏描述符。
+      剩余不确定性只剩「OriginOS 1.0 这一具体 ROM 的实现」，且已有成熟库在同类场景中落地，
+      故从「方向可能不成立」降级为「具体机型需验」。
+    mitigation: "使用 Autfy/ESP32-BLE-HID 的 digitizer 描述符；按 coordinate_mode.verification_checklist 逐条验"
+    fallback: "仅在触摸屏描述符确认无效时，才回退 relative + 归零"
+    status: "OPEN（待真机冒烟）"
+
+  - id: "R2"
+    risk: "长期插电导致电池鼓包 / 屏幕常亮导致 AMOLED 烧屏"
+    level: "HIGH"
+    trigger: "7×24 运行后逐渐显现，不可逆"
+    refined_view: >
+      v1.4 起把主因从"循环次数"改判为"满电停留 × 温度"：
+      每天的放电吞吐量由功耗决定，浅循环换不来更多总吞吐；真正可优化的是长期停在哪个 SOC 区间。
+      据此重新设计了 Tier-A 方案。
+    mitigation: >
+      默认 Tier A：保留原电池 + 5V/1A 慢充 + 本地定时的智能插座，把 SOC 压在 45-65%；
+      详见 android_prep.long_term_power.tier_a（含"为什么必须用慢充"这一关键工程细节）。
+    why_keep_battery: >
+      保留电池的核心理由是断电容错：旁路供电下一次供电闪断就等于现场要有人去按电源键，
+      这对异地无人值守是更糟的失效模式。详见 android_prep.long_term_power.strategy_decision.decisive_argument。
+    fallback: "降低在线时长，改为按需上电；拆电池走旁路仅在能接受『断电需人工开机』时才考虑"
+    status: "OPEN（策略已定，待实测标定放电速率与温升）"
+
+  - id: "R3"
+    risk: "摄像头/手机位移导致标定矩阵 H 失效"
+    level: "HIGH"
+    trigger: "磕碰、万向臂蠕变、打扫卫生"
+    mitigation: "刚性固定 + 扎带锁死；UI 提供一键标定自检"
+    fallback: "重新走 9 点标定流程"
+    status: "OPEN"
+
+  - id: "R4"
+    risk: "OriginOS 后台策略杀死 BLE 连接或触发省电断连"
+    level: "LOW（原 MEDIUM，2026-09-28 下调）"
+    trigger: "锁屏后或空闲一段时间后"
+    why_downgraded: >
+      Q4 已结案：HOGP 走 Android 系统蓝牙栈而非 App 持有的 GATT 连接，
+      Doze / App Standby / 前台服务等后台限制不适用于本场景；
+      且 BLE 控制器有独立供电域，主机休眠时仍能维持连接。
+      这不是"策略可能杀连接"，只剩 OEM 激进省电这一种小概率路径。
+    residual_uncertainty: >
+      真正未定的改成了另一件事：息屏后 HID 触控能否把屏幕唤醒。
+      它不导致断连，但决定"能否用息屏来实现烧屏缓解"，因此在 Q4 验证项里单独跟踪。
+    mitigation: "蓝牙加入电池优化白名单（低成本保险）；默认常亮，不依赖息屏唤醒"
+    fallback: "若息屏后无法唤醒，则放弃息屏策略，改用降亮度 + 壁纸轮换处理烧屏"
+    status: "OPEN（待息屏 30 分钟单项验证）"
+
+  - id: "R5"
+    risk: "WiFi 与 BLE 共用 2.4GHz 射频，图传与 HID 报告互相抢占"
+    level: "MEDIUM"
+    trigger: "持续高帧率推流叠加高频点击"
+    refined_view: >
+      Q3 已结案其"可行性"：官方共存矩阵把 Wi-Fi Connected + BLE Connected 标为 Y，
+      共存周期内各占约 50% 时隙。所以本条不再是"会不会冲突"，而是"两边够不够用"。
+    mitigation: >
+      按 tech_stack.coexistence.tuning_knobs 调：任务分核、用 setPreferredConnectionParams 定点、
+      注意 PSRAM 带宽竞争（这条比射频更容易成为真瓶颈）。
+      兜底走 degradation_path，其中"发 HID 时短暂抑制取帧"的性价比最高。
+    acceptance_required: "必须跑满 1 小时混合负载压测并按四项量化指标判定，不能只验证没断连"
+    fallback: "降 fps/画质优先于牺牲输入；保留图传优先级可配置"
+    status: "OPEN（待 1 小时混合压测）"
+
+  - id: "R12"
+    risk: "镜头出厂合焦点远于工作距离，画面全程发虚"
+    level: "HIGH"
+    trigger: "首次安装 —— 这是最容易被误判为『摄像头坏了/驱动不对』的坑"
+    why_high: >
+      它的隐蔽性在于：画质糊会被优先归因为分辨率选错、驱动配置不对，
+      于是反复折腾参数而不是去旋转镜头座。实际上标配定焦模块的出厂合焦点通常远于 15cm，
+      不手动调焦必然糊。
+    mitigation: "严格按 hardware.optics.focus_procedure 执行，且必须在距离锁定之后才调焦"
+    detection: "判定别用肉眼，用 Pointer location 十字线或标定图最小线宽的锐利度"
+    fallback: "换带调焦环的广角模块（同时按 Q7 距离表重新算工作距离）"
+    status: "OPEN"
+
+  - id: "R13"
+    risk: "径向畸变无法被单应矩阵吸收，导致边缘标定残留系统性误差"
+    level: "MEDIUM"
+    trigger: "标定通过进入实际使用后，四角区域落点偏"
+    why_this_was_wrong_before: >
+      v1.1-v1.3 曾写"畸变由 calibration 吸收"，数学上不成立：
+      H 只描述平面到平面的射影变换，径向畸变是非线性非射影畸变。
+      仅用 9 点去拟合 H，会把畸变摊成平均残差，表现为中心准、边缘偏。
+    mitigation: "标定阶段先 calibrateCamera 求畸变系数做 undistort，再 fit H；标定点增至 ≥16 点"
+    detection: "用留一残差法看残差是否随离中心距离单调增大 —— 若是，即为畸变未被建模"
+    fallback: "若不想引入 OpenCV 完整标定，则把可操作区限制在屏幕中央区域，边缘标为不可点区"
+    status: "OPEN"
+
+  - id: "R6"
+    risk: "ESP32-S3 长期满载高温降频甚至死机"
+    level: "MEDIUM"
+    trigger: "夏季环境或散热不良"
+    mitigation: "散热片 + 降频阶梯 + 任务看门狗"
+    fallback: "降分辨率保运行"
+    status: "OPEN"
+
+  - id: "R7"
+    risk: "Pinout 与板卡不符导致摄像头无输出或损坏"
+    level: "MEDIUM"
+    trigger: "接线/首次上电"
+    mitigation: "逐脚核对原理图；上电前万用表确认 VCC 电平"
+    fallback: "换一块符合规格的板卡，或按实际原理图改 Pinout"
+    status: "OPEN"
+
+  - id: "R8"
+    risk: "Tailscale 无法 P2P 打洞，走 DER 中继导致延迟显著上升"
+    level: "MEDIUM"
+    trigger: "对称型 NAT / 运营商限制"
+    note: >
+      注意 Q6 的结论：无论能不能打洞，subnet router 都是必需的——
+      它解决的是"ESP32 无法安装客户端"的问题，与 NAT 穿透是两个维度。
+      不要误以为部署了 subnet router 就不会走中继。
+    mitigation: "用 tailscale netcheck / ping 确认是否落在中继上；对称 NAT 场景下无法根除，只能量化其代价"
+    fallback: "接受高延迟，仅用于非实时操作；relay 路径要按 network.bandwidth_headroom 留 2 倍余量"
+    status: "OPEN"
+
+  - id: "R14"
+    risk: "subnet router 的 Tailscale 节点密钥过期，远程访问静默失效"
+    level: "MEDIUM"
+    trigger: "部署数月后某一天"
+    why_nasty: >
+      节点掉出 tailnet 后，现场设备一切正常（ESP32 还在跑、画面还能在本地看），
+      只有远程进不去。排障时很容易把时间花在怀疑 ESP32 或 WiFi 上。
+    mitigation: "对 subnet router 关闭 key expiry（或改用 tag，tag 默认禁用过期）；写入部署检查清单"
+    detection: "控制端 health 面板保留『能否 ping 通 router 的 100.x 地址』分支，用于区分是 router 掉线还是 ESP32 掉线"
+    fallback: "重新认证一次即可恢复（tailscale up）；关键是别把它误诊为硬件故障"
+    status: "OPEN"
+
+  - id: "R15"
+    risk: "智能插座成为新的单点故障 / 依赖云端导致定时失效"
+    level: "MEDIUM"
+    trigger: "插座掉线、家庭 WiFi 变更、云平台故障"
+    why: >
+      Tier-A 供电策略依赖插座定时。若插座是纯云端调度型，断外网后不执行 schedule，
+      手机会一路放电到关机——而他又不在现场。
+    mitigation: "选本地执行定时的插座型号；插座 SSID/密码变更窗口要避开无人期"
+    detection: "把『电池长期低于 40%』作为控制端可观测项（相机本身就是 SOC 读数手段）"
+    fallback: "本地定时的简易时控开关（纯硬件，无云依赖）是更保守的选择"
+    status: "OPEN"
+
+  - id: "R16"
+    risk: "官方 broker 成为全局单点故障，且视频流带来持续流量成本"
+    level: "HIGH（v1.6 上调：运营责任由项目方承担）"
+    trigger: "v1.5 默认路径改为 outbound_relay 后立即成立；v1.6 定为项目方托管后影响面扩大"
+    why: >
+      单点故障从"家里一台常开节点"换成"一个中心 broker"，影响面反而变大：
+      broker 挂掉 = 全部用户同时失联，而不是单站点失联。
+      v1.6 后这个故障不再由用户自己承担，而是由项目方承担 —— 故障即项目信誉损失。
+      同时画面流经过 broker，按 broker_service.economics 的估算，成本随用户数线性增长。
+    mitigation: >
+      broker 需可观测（健康检查与告警）并支持水平扩展；
+      按 broker_service.architecture_refinement 把 broker 收敛为"信令 + 中继兜底"，
+      让 P2P 承担主要流量；严格执行按需拉流，禁止 24h 常推；
+      成本侧设免费额度与限流，见 broker_service.economics.mitigations。
+    detection: "控制端 health 面板区分『broker 不可达』与『设备不可达』两个分支"
+    fallback: "视频回落按需抓单帧；用户可随时迁移到自托管实例（p2_self_host_first_class 是这条兜底的前提）"
+    status: "OPEN（设计阶段；待定 SLA 与停服预案）"
+
+  - id: "R19"
+    risk: "官方 broker 的运营可持续性与合规负担"
+    level: "HIGH"
+    trigger: "服务正式对外开放、用户规模增长、或监管问询时"
+    why: >
+      带宽是随用户数线性增长且无法靠优化消除的成本（broker_service.economics 已量化：
+      1000 日活约 26 TB/月）。叠加中国境内的 ICP 备案义务与《个人信息保护法》
+      对"手机屏幕内容"这一类个人信息的处理要求，运营成本与法律风险都不低。
+      这类风险的特点是不爆发则已，爆发即服务下线。
+    mitigation: >
+      先定商业模式与免费额度，再开放注册；境内运营必须先解决备案；
+      隐私政策明确告知留存期限与删除机制；日志不得留存可识别内容。
+    fallback: >
+      缩小官方实例的承诺范围（例如只做信令不做中继），
+      把大规模与合规敏感用户导向自托管或企业私有部署。
+    status: "OPEN（待商业模式与地域决策）"
+
+  - id: "R20"
+    risk: "broker 运营方可读取全部画面流 —— 集中信任风险"
+    level: "HIGH"
+    trigger: "项目方运营 broker 之日起即存在，无需外部攻击"
+    why: >
+      这是"项目方提供 broker"区别于"用户自建 broker"的关键新增风险：
+      用户自建时运营方就是用户自己，而项目方托管后，
+      项目方在技术上获得了读取所有用户手机屏幕、控制所有设备的能力。
+      对开源项目而言，这既是实质风险，也是社区信任问题 ——
+      一旦被质疑，解释成本远高于提前做加密。
+    mitigation: >
+      端到端加密（broker_service.three_preconditions.p1_e2e_encryption）：
+      密钥带外交换、broker 只转发密文、永不落明文。
+      并把"broker 看不到明文"写进安全白皮书，作为对外可验证的承诺。
+    verification: "需提供可验证手段（如开源客户端 + 抓包自检指引），让用户能自行确认 broker 收到的是密文"
+    fallback: "若 E2E 在工程上无法落地，则应重新考虑是否由项目方托管 —— 这一条是硬前提"
+    status: "OPEN（MVP 阶段就应实施，不可延后）"
+
+  - id: "R21"
+    risk: "IPv4 打洞在家宽 CGNAT 下成功率不确定，中继占比可能远高于预期"
+    level: "HIGH"
+    trigger: "真实网络环境下首次大规模接入"
+    why: >
+      P2P 优先的收益（带宽成本下降）完全建立在"打洞能成功"这个假设上。
+      但中国家庭宽带 IPv4 相当比例处于运营商级 NAT 之下，对称 NAT 会直接导致打洞失败。
+      若实际中继占比过高，则 broker_service.economics 的成本模型失效，
+      项目方将承担远超预期的带宽支出 —— 而这个偏差在服务开放后才暴露，届时已不可逆。
+    mitigation: >
+      把 IPv6 直连放在打洞之前（IPv6 无 NAT，才是稳定的零中继路径）；
+      成本规划按"部分用户走中继"建模并保留余量；
+      上线前做真实家宽 / 4G 环境的打洞成功率专项测量。
+    detection: "broker 侧统计并上报『P2P 成功率 / 中继占比 / 平均中继时长』三项指标"
+    fallback: "若中继占比过高，收紧免费额度并优先把大流量用户导向自托管或企业私有部署"
+    status: "PARKED（v1.8）—— 该风险只在 P2P 启用后才成立，随 P2P 一并推迟"
+    v1_8_note: >
+      此前提出的「真实网络环境打洞成功率专项测量」已明确叫停：在链路尚未跑通时
+      测量一条不存在的路径没有意义。触发条件见 execution_policy.re_evaluate_trigger。
+
+  - id: "R22"
+    risk: "P2P 改走 UDP 后，MJPEG 分片丢包导致整帧报废、有效帧率下降"
+    level: "MEDIUM"
+    trigger: "P2P 视频通道启用后"
+    why: >
+      VGA 单帧 JPEG 常达 20-60 KB，需分成数十个 UDP 分片；
+      JPEG 不可部分解码，丢任意一个分片整帧作废。
+      单帧越大，整帧存活率越低（40 KB / 0.5% 丢包下约 85%）。
+      表现为"画面帧率明显低于配置值"，易被误诊为摄像头或 WiFi 问题。
+    mitigation: >
+      分片对齐 MTU（约 1200 字节）；P2P 路径下主动压低单帧大小；
+      带 seq 与帧号，缺片即整帧丢弃不做重传（重传对实时视频无意义）。
+      详见 broker_service.transport_architecture.udp_fragmentation。
+    why_acceptable: "MJPEG 每帧独立、无帧间依赖，丢帧只降帧率，不会花屏或累积错误"
+    detection: "健康面板上报『发送帧率 / 有效帧率 / 整帧丢弃率』，三者必须分开统计"
+    fallback: "丢帧率过高时自动降画质或降 fps；极端情况回落 broker 中继（TCP 可靠）"
+    status: "PARKED（v1.8）—— MVP 走 TCP/WebSocket 全量中转，不存在 UDP 分片问题"
+    v1_8_note: "随 P2P 一并推迟；跑通后若启用 P2P 视频通道则本条自动复活"
+
+  - id: "R17"
+    risk: "大规模部署所需的配网 / 身份 / OTA 能力在 MVP 设计中缺失"
+    level: "HIGH"
+    trigger: "目标变更为大规模部署"
+    why: >
+      MVP 的三处设计在单台时可行、多台时不可行：手动配网、共用静态 token 且串口人工录入、
+      禁用 OTA 走串口烧录。这三项不补齐，规模化在运维上不具备可行性，
+      且它们的工作量远大于网络层改造本身。
+    mitigation: "按 scalability.deployment_at_scale_requirements 逐项补齐，并把配网与身份安全列为 M1 之前的门禁"
+    fallback: "小批量部署时可暂缓 OTA，但配网与每设备唯一凭据不可省略"
+    status: "OPEN（目标变更的连带工作量，尚未排入 milestones）"
+
+  - id: "R18"
+    risk: "开源分发的依赖许可证风险与上游库硬依赖"
+    level: "MEDIUM"
+    trigger: "仓库公开、引入外部贡献者或打包分发时"
+    why: >
+      tech_stack.libraries 中的第三方依赖（含 Autfy/ESP32-BLE-HID）许可证尚未清点，
+      且核心 HID 描述符能力目前依赖单一上游库 —— 这与已删库的先例（asterics，404）叠加，
+      对开源项目是实质性风险。
+    mitigation: >
+      分发前完成依赖许可证清点并确认兼容；fork 并锁定版本（R1 已有此要求）；
+      把 Report Descriptor 规格完整固化在本文件内，使其可在脱离上游库的情况下自行实现。
+    fallback: "若许可证不兼容，则自实现 HID 描述符与报告封装层（规格已在本文件内，工作量可控）"
+    status: "OPEN（待许可证清点）"
+
+  - id: "R9"
+    risk: "安装距离不当导致画面装不下整屏"
+    level: "LOW（设计已闭合，风险转为执行偏差）"
+    trigger: "首次安装取景"
+    resolved_by: >
+      Q7 已用几何算清：早期写的 8cm 是错的（只覆盖约 56% 长边），正确的推荐值是 13-16cm，
+      取决于买到的具体镜头。详见 hardware.optics.distance_table 与 recommended_working_point。
+    mitigation: >
+      按 hardware.optics.measure_procedure 用屏幕当标尺现场反推实际视场，
+      不要依赖供应商标称值；算出 d_min 后取 1.05-1.10 倍再锁机构。
+    fallback: "若空间受限装不下 13cm，则更换更广角的镜头模块（代价是径向畸变加重，见 R13）"
+    status: "OPEN（待取景验证）"
+
+  - id: "R10"
+    risk: "手机无响应/黑屏时完全失去控制手段"
+    level: "LOW"
+    trigger: "App 卡死、系统假死"
+    mitigation: "当前只能物理接触"
+    fallback: "v2.0 增加 GPIO → 继电器/FingerBot 物理按键（已在 extensibility 预留）"
+    status: "ACCEPTED"
+
+  - id: "R11"
+    risk: "核心依赖 Autfy/ESP32-BLE-HID 为单人维护项目，可能停更或引入破坏性变更"
+    level: "MEDIUM"
+    trigger: "库更新、作者删库（已有先例：asterics/ESP32-BLE-HID 现已 404）"
+    mitigation: "fork 到自己的仓库并锁定 commit；保留 descriptor 规格在本文件内，脱离库也能自行实现"
+    fallback: "按 coordinate_mode.correct_descriptor_spec 自行实现 5 字节触控报告"
+    why_this_matters: >
+      v1.1 规划时选定的 asterics/ESP32-BLE-HID 今天已经 404，
+      说明「引用第三方库链接」本身就是一种技术债。描述符规格必须写在规格文件里而非只留链接。
+    status: "OPEN"
+
+# ------------------------------------------------------------
+# 里程碑 —— 每个 gate 有明确的出口条件，不满足不推进
+# gate 的意义：有些错误越晚发现和修正成本越高，必须在推进前结清
+# ------------------------------------------------------------
+milestones:
+  - id: "M0"
+    name: "环境就绪"
+    exit_criteria:
+      - "Arduino-ESP32 环境可编译烧录"
+      - "按 hardware.pinout 接线后 CameraWebServer 能出流"
+      - "Y71t 完成 android_prep 全部必做项"
+
+  - id: "M1"
+    name: "看得见，且看得稳"
+    gate: "新增：光学几何与合焦（Q7 出口）"
+    exit_criteria:
+      - "按 hardware.optics.measure_procedure 反推实际视场，确认整屏入画且余量 5-10%"
+      - "按 hardware.optics.focus_procedure 完成调焦，十字线/标定图最小线宽可清晰分辨"
+      - "VGA@15fps 连续 30 分钟无花屏、无丢帧"
+      - "物理安装已锁定（含轴向距离），标定前置条件满足"
+      - "GET /api/v1/health 可返回完整字段"
+
+  - id: "M2"
+    name: "发得出去（触控通路打通）"
+    gate: "冒烟 A"
+    exit_criteria:
+      - "tap / swipe / HOME / BACK 四类指令均能被 Y71t 稳定响应"
+      - "键盘与绝对触控在同一 BLE 连接中共存"
+      - "BLE HID 与 WiFi 图传同时工作不断连"
+      - "跑满 tech_stack.coexistence.acceptance_test 的 1 小时混合压测，四项指标达标"
+      - "若出现「改了描述符没反应」，确认已删除旧配对并重连"
+      - "open_questions.Q1 真机侧闭合"
+
+  - id: "M3"
+    name: "点得准（标定闭环）"
+    gate: "门禁 B"
+    exit_criteria:
+      - "按 coordinate_mapping.calibration 的留一残差检验通过，且确认残差不随离中心距离单调增大（否则命中 R13 径向畸变）"
+      - "coordinate_mapping.acceptance 三项指标全部达标"
+      - "息屏 30 分钟的 Q4 验证项完成，结论回写 android_prep.bluetooth"
+      - "app 可用区域已由 dumpsys 回填"
+
+  - id: "M4"
+    name: "远程可用"
+    v1_5_note: >
+      目标变更后本里程碑的验收对象改变：默认路径由 subnet router（lan_direct）
+      改为 outbound_relay（设备主动出站到 broker）。下列首条已按新路径改写，
+      原 subnet router 验收项降级为 lan_direct 后端的可选检查。
+    exit_criteria:
+      - "默认后端 outbound_relay 打通：设备零现场配置即可注册上线，异地控制端可取流与下发指令"
+      - "控制端能区分『broker 不可达』与『设备不可达』两种失败（R16 的可观测要求）"
+      - "每设备唯一凭据已生效，禁止共用 token；broker 侧按 device_id 做访问隔离"
+      - "（可选后端）若走 lan_direct，则 subnet router 已就绪且已关闭 key expiry"
+      - "UC1~UC4 全部通过，UC5 连续 1 小时无失联"
+      - "security.mvp_minimum 四条均已落地"
+      - "供电 Tier-A 窗口已按实测标定，SOC 稳定在目标区间且机身无明显温升"
+      - "72h soak test 通过"
+
+# ------------------------------------------------------------
+mvp:
+  step_1: "ESP32-S3 烧录 CameraWebServer 例程，浏览器看 MJPEG 流"
+  step_2: "实测 Y71t 屏幕真实分辨率，回填 target_device.screen_resolution.nominal"
+  step_3: "完成 android_prep 全部必做项，避免后续反复返工"
+  step_4: "整合 BLE HID，ESP32 广播 BLE HID，Y71t 配对"
+  step_5: "【门禁】坐标模式决策：验证 absolute 是否可用，收口 relative/absolute"
+  step_6: "【门禁】9 点标定求 H 矩阵，残差校验通过并持久化"
+  step_7: "Win10 浏览器页面显示摄像头画面 + 点击按钮（集成换算模块）"
+  step_8: "点击画面任意位置 → CAP→SCR→HID 换算 → BLE 下发 → Y71t 正确响应"
+  step_9: "跑通 UC1~UC4，脚本化并落盘证据"
+  step_10: "Tailscale 配置完成，异地 Win10 能看屏+点击"
+  step_11: "UC5 稳定性验证 + 72h soak test"
+  acceptance: "异地浏览器能看 Y71t 屏幕画面；点击画面任意位置能让 Y71t 在同一位置执行操作（落点误差满足 coordinate_mapping.acceptance）；连续运行 72 小时无需人工干预"
+
+# ------------------------------------------------------------
+implementation_order:
+  step_1: "下单 bom.required + bom.recommended，到货核对 board 型号与 PSRAM 容量"
+  step_2: "核对原理图确认 hardware.pinout，万用表确认 VCC 电平后再上电"
+  step_3: "Arduino-ESP32 环境搭建 → 跑 CameraWebServer → 浏览器看流（M0）"
+  step_4: "【冒烟 A】用 Autfy/ESP32-BLE-HID 的 Digitizer 触摸屏描述符做兼容性冒烟：一次 tap + 一次 swipe + 一次 HOME/BACK，并验证 BLE 与 WiFi 图传共存不再断连（不再是选型决策，选型已于 v1.3 收口）"
+  step_5: "集成选定的 BLE HID 库 → Y71t 配对 → 发 Home/Back 验证基础通路（M2）"
+  step_6: >
+    【光学工位，顺序不可颠倒】
+    (a) 摄像头旋转 90° 竖置；
+    (b) 按 hardware.optics.measure_procedure 用屏幕当标尺反推实际视场，算出 d_min 后取 1.05-1.10 倍定距（预期 13-16cm，不是 8cm）；
+    (c) 距离锁死后再按 focus_procedure 调焦；
+    (d) 最后锁定全部关节（含轴向）
+  step_6b: >
+    【供电工位】改用 5V/1A 充电器（禁用 44W 闪充）；
+    实测屏幕常亮下的放电速率，据此设智能插座补电窗口，目标 SOC 区间 45-65%
+  step_7: "【门禁 B】标定链路: 标定图全屏 → 9 点采集 → 求 H → 残差校验 → 持久化 → 重投影自检（M3）"
+  step_8: "换算模块落地: Win10 侧实现 CAP→SCR→HID，单元测试覆盖已知映射用例"
+  step_9: "ESP32 内置 HTTP API: /api/v1/tap /api/v1/swipe /api/v1/key 接收 JSON 指令并加 token 鉴权"
+  step_8b: >
+    【v1.5 新增，必须早于 step_9】传输层抽象落地：定义 connect / send_command /
+    stream_frames / report_endpoint 四个接口。MVP（见 execution_policy.mvp_transport_decision）
+    仅实现 outbound_relay 一个后端（控制端经 broker 中转，视频+指令都走 TCP/WebSocket），
+    但接口与后端选择逻辑要先立住 —— 否则 step_9 之后的改造都是重构
+  step_10: "ESP32 内置 WebSocket: /api/v1/stream 推 JPEG 帧"
+  step_11: "Win10 浏览器 UI: canvas 显示视频 + 虚拟按钮面板 + 标定模式 + 健康面板"
+  step_12: "可靠性加固: 看门狗 / 重连 / 降级阶梯 / /api/v1/health"
+  step_13: "Python 自动化脚本: UC1~UC5 + 坐标链路断言 + 证据落盘"
+  step_14: >
+    【v1.5 改写】远程接入: 落地 outbound_relay 后端（设备主动出站注册 → broker 侧按 device_id
+    隔离 → 控制端经 broker 取流与下发）→ 补齐每设备唯一凭据 → 验证零现场配置上线（M4）。
+    原 Tailscale/subnet router 流程降级为 lan_direct 后端的可选部署指南，不再作为默认路径。
+  step_15: "72h soak test → 复盘 heap/uptime/reset_reason 曲线"
+
+  blocking_dependencies:
+    step_5_depends_on: "step_4（选错库会导致输入层重写）"
+    step_7_depends_on: "step_6（安装未锁定、或未调焦清晰时，标定无意义）"
+    step_6_depends_on: "step_3（先能出流，才谈得上测量视场与调焦）"
+    step_8_depends_on: "step_7（没有 H 矩阵就没有可用的真实 SCR 坐标）"
+    step_13_depends_on: "step_8（自动化断言依赖换算模块）"
+    step_15_depends_on: "step_12（没有健康数据就无法定位 soak 失败原因）"
+
+# ------------------------------------------------------------
+# 命名约定 —— 让后续 AI / 脚本保持一致
+# ------------------------------------------------------------
+naming_conventions:
+  rationale: "跨会话协作时，命名不一致是隐性返工的主要来源"
+
+  device_id: "小写短横线，如 y71t-01；写入 NVS 并用于标定 profile 分目录"
+  api:
+    base: "/api/v1"
+    style: "名词或动词短语，小写短横线"
+    payload: "JSON，snake_case"
+    auth: "Header: X-Auth-Token"
+  coord_fields:
+    camera_pixel: "cap_x / cap_y"
+    screen_pixel: "scr_x / scr_y"
+    hid_logical: "hid_x / hid_y"
+    rule: "坐标字段必须带坐标系前缀，禁止裸写 x / y"
+  units: "时间一律 ms；坐标单位在字段名后缀已隐含，值里不带单位"
+  log_prefix: "[CAM] / [BLE] / [HTTP] / [CAL] / [WDG]"
+  git:
+    branch: "feat/ fix/ chore/ doc/"
+    commit: "Conventional Commits，如 feat(calibration): add homography solver"
+  versioning: "SemVer；规格文件本身的 version 与固件版本独立演进"
+
+# ------------------------------------------------------------
+open_questions:
+  - id: "Q1"
+    question: "Y71t / Android 11 是否接受第三方 BLE 绝对坐标 (HID Touch) 报告？"
+    status: "RESOLVED (desk) — 待真机冒烟确认"
+    answer: >
+      接受，但必须是 Digitizer / Touch Screen（Usage Page 0x0D + Usage 0x04）描述符，
+      而不是「鼠标描述符 + Absolute 标志位」。后者在 Android 上不可靠，是社区里
+      「绝对鼠标点不动」的真实根因。已落实到 10000 逻辑范围、Report ID 0x01、
+      5 字节报告、state=0x03/0x00 的具体规格，见 input.ble_hid.coordinate_mode.resolved_answer。
+    evidence:
+      - "sobrinho/ESP32-BLE-Abs-Mouse：实装 digitizer 描述符，README 标注兼容 Android"
+      - "Autfy/ESP32-BLE-HID：文档直接写明 Android 将 0~10000 逻辑坐标映射到屏幕"
+      - "反面旁证：kshoji BLE-HID-Peripheral 的兼容矩阵中，绝对鼠标仅 macOS 验证通过"
+    remaining_action: "M2 阶段做一次 tap/swipe 冒烟即可闭合"
+    blocks: "不再阻塞；原卡点 milestones.M2 已降级为冒烟"
+
+  - id: "Q2"
+    question: "Y71t 屏幕真实分辨率为多少（是否被状态栏/导航栏占用）？"
+    status: "RESOLVED — 面板分辨率已确认"
+    answer: >
+      1080 × 2400，20:9，6.44 英寸 AMOLED，60Hz，约 409ppi。
+      来源 vivo 官方规格参数页，与 GSMArena / 百度百科口径一致。
+      剩余唯一未定项是应用可用区域高度（状态栏占用），属可测量项而非未知项。
+    evidence: "https://www.vivo.com.cn/vivo/param/y71t"
+    remaining_action: "真机到手用 adb shell dumpsys window displays 读 app 矩形并回填"
+    blocks: "不再阻塞任何步骤"
+  - id: "Q3"
+    question: "Autfy/ESP32-BLE-HID（BLE HID）能否与 esp32-camera + WiFi 图传在同一 Arduino-ESP32 工程中共存？"
+    status: "RESOLVED (desk) — 原理成立；剩余为稳态 QoS 实测量化"
+    answer: >
+      能共存，且不是勉强可行：ESP32-S3 只有一套 2.4GHz 射频，WiFi 与 BLE 走时分复用，
+      Espressif 官方共存矩阵把「Wi-Fi STA Connected + BLE Connected」标注为 Y（性能稳定），
+      并写明该方案下共存周期内两者各占约 50% 时隙。
+      因此问题从「会不会冲突」降级为「一半资源够不够用」。
+      真正的隐患常被误判：除了射频时隙，PSRAM 与总线带宽是另一条竞争线
+      （camera frame buffer 走 DMA 占 PSRAM，WiFi TX buffer 也要带宽），
+      它比射频更容易成为实际瓶颈。
+    resolved_into: "tech_stack.coexistence（含 tuning_knobs / acceptance_test / degradation_path 三级方案）"
+    key_actions:
+      - "任务绑核：WiFi 与 BT controller/host 分到不同 CPU 核"
+      - "用库自带的 setPreferredConnectionParams / setMTU 定点调节，不要沿用默认值"
+      - "不要在这类共存场景下反复启停 BLE 广播（最典型的疑难杂症来源）"
+    blocks: "不阻塞 M2；M2 的出口条件改为跑满 1 小时混合压测并按四项量化指标判定"
+    remaining_action: "执行 tech_stack.coexistence.acceptance_test（1 小时混合负载），并把结果回写到该章节"
+
+  - id: "Q4"
+    question: "息屏状态下 Y71t 是否保持 BLE HID 连接？"
+    status: "RESOLVED (desk) — 会保持；另有一项新问题被识别出来"
+    answer: >
+      保持。理由是分清楚两个层次：BLE 物理连接由独立供电域的蓝牙控制器维持
+      （主机休眠时它仍能保活并在需要时唤醒主机，与耳机/手表息屏不断连是同一机制）；
+      HOGP 输入由 Android 系统蓝牙栈处理，不是 App 持有的 GATT 连接。
+      开发者文档里那套 Doze / App Standby / 前台服务限制约束的是 App 进程发起的 BLE 操作，
+      对本场景不适用——这一点是最容易被误读的地方。
+    newly_identified: >
+      真正未定的问题被替换成了：息屏后 HID 触控能否把屏幕唤醒。
+      它不影响连接，但决定"能否靠息屏来缓解烧屏"，所以单独跟踪。
+    resolved_into: "android_prep.bluetooth.screen_off_behavior"
+    blocks: "不阻塞；android_prep 默认维持常亮，息屏仅作为可选降级"
+    remaining_action: "息屏 30 分钟后发一次 tap，记录三件事：连接是否还在 / 屏幕是否被唤醒 / tap 是否生效"
+
+  - id: "Q5"
+    question: "Y71t 是否支持旁路供电（绕过电池直接给主板供电）？"
+    status: "RESOLVED — 官方不支持（未见任何说明），据此定 Tier-A 为默认策略"
+    answer: >
+      官方参数页只有电池容量与闪充规格，对旁路供电没有任何承诺 → 按不支持处理。
+      社区/维修业的可行做法是「DC 稳压源或电池模拟器给 B+/B- 供电 + NTC 引脚接等效电阻」，
+      且 NTC 阻值必须实测（公开先例中有的机型约 2.35kΩ，也有 20-30kΩ 的经验值），
+      照抄必然返工。
+    decision: >
+      但本项目不采用旁路供电，决定性理由不是寿命而是失效模式：
+      拆掉电池后任何一次供电闪断都会直接关机，而异地无人值守场景下关机
+      意味着必须有人到现场按电源键。用一个确定的运维灾难去换不确定的电池寿命收益不划算。
+    additional_correction: >
+      顺带纠正了 v1.1-v1.3 的一处错误设想：「每 24h 断电一次让电池深循环」方向与化学常识相反。
+      每天的放电吞吐量由功耗决定改不了，浅循环换不来更多总吞吐；
+      真正可优化的是长期停留在哪个 SOC 区间（40-60% 应力最低）以及温度。
+    resolved_into: "android_prep.long_term_power（Tier A / B / C 三层方案 + 为什么必须用慢充）"
+    blocks: "不阻塞任何步骤"
+    remaining_action: "实测一次屏幕常亮的放电速率，据此设定智能插座补电窗口"
+
+  - id: "Q6"
+    question: "Tailscale 侧如何接入 ESP32：旁路 subnet router 还是给 ESP32 可达路由？"
+    status: "RESOLVED — 这不是二选一，唯一解就是 subnet router"
+    answer: >
+      ESP32 跑不了 Tailscale 客户端，而官方对「无法安装客户端的设备」（摄像头、
+      老旧内核 NAS、打印机、交换机）给出的标准答案就是 subnet router：
+      同网段一台常开的 Tailscale 节点代为通告路由。因此答案收敛为「必须有一台常开节点」，
+      剩下的只是选谁来当这个节点（路由器跑 OpenWrt 最优，其次树莓派/NAS）。
+    explicit_constraint: "Android 手机不能当 subnet router —— 其客户端不提供路由通告能力"
+    gotchas_identified:
+      - "--accept-routes 平台默认值不对称（Linux tailscaled 默认 false），典型症状是『手机能连、电脑连不上』"
+      - "--snat-subnet-routes 默认 true 正是 ESP32 无需回程路由就能应答的原因，MVP 必须保持默认"
+      - "节点密钥默认会过期，到期后静默掉线，表现为『部署几个月后某天突然连不上』"
+    resolved_into: "network.esp32_access（含配置步骤、四个必踩坑、无常开节点时的兜底拓扑）"
+    blocks: "不阻塞 M4，但需提前确认常开节点来源"
+    remaining_action: "确认现网是否有可复用的常开节点；确定后立即关闭该节点的 key expiry"
+
+  - id: "Q7"
+    question: "8cm 距离下 OV2640 实际视野是否能完整覆盖 6.44 英寸屏幕？"
+    status: "RESOLVED — 不能，8cm 是错的；正确值是 13-16cm"
+    answer: >
+      不能覆盖。屏幕显示区为 67.13 × 149.17mm（由 6.44 英寸 + 20:9 反推），
+      OV2640 靶面 3.59 × 2.71mm。竖置 90° 时长边是约束边：
+      标配 66° 镜头在 8cm 处只能装下约 56% 的屏幕长边，即近半个屏幕在画面外。
+      完整覆盖所需最小距离：60°→16.2cm，66°→14.4cm，73°→12.6cm，90°→9.4cm，120°→5.4cm。
+      取 5-10% 余量后，66° 推荐 15cm、73° 推荐 13cm、90° 推荐 10.5cm。
+      早期文档里"必要时调整到 12cm"这个 fallback 同样不够（仅覆盖 83%）。
+    correction_applied: "已改写 hardware.mounting.camera_distance，并新增 hardware.optics 章节"
+    secondary_finding: >
+      比视野更易踩的坑是**合焦距离**：标配定焦模块出厂合焦点通常远于本项目工作距离，
+      不手动旋转镜头座调焦就一定是糊的，且极易被误判为摄像头或驱动故障（已登记为 R12）。
+    unexpected_consequence: >
+      景深比直觉浅得多（估算约 ±15-25mm），因此机构不仅要锁朝向，还要锁轴向距离。
+      这也进一步强化了 R3 的刚性要求。
+    resolved_into: "hardware.optics（几何推导、距离表、现场测量法、调焦步骤、景深）"
+    blocks: "不阻塞；影响的是支架选型与首次安装"
+    remaining_action: "到货后按 hardware.optics.measure_procedure 反推实际视场，反算距离后再锁机构调焦"
+
+# ------------------------------------------------------------
+# 工作目录规划 —— 工程启动时建立，支撑 pre_arrival_work 的接缝策略
+# ------------------------------------------------------------
+workspace_layout:
+  root: "y71t-kvm-lite/"
+  convention: "SemVer 与规格文件 version 独立演进；目录按职责切分，跨分区共享的契约放在 shared/"
+  directories:
+    - path: "shared/"
+      purpose: "跨分区共享的机器可读契约：API schema、坐标换算常量、标定 profile schema、token 约定"
+      contents:
+        - "api_schema.yaml: 所有 /api/v1/* 请求/响应 JSON schema 与字段定义"
+        - "coords.py / coords.h: CAP→SCR→HID 换算纯函数（无硬件依赖，唯一真源）"
+        - "devices/<device_id>/calib.json: 标定结果（H 矩阵 + residual_offset + 残差）"
+    - path: "broker/"
+      purpose: "中转服务端（step_14）：设备注册、按 device_id 隔离、控制端取流与下发"
+      contents:
+        - "MVP 全量中转：WebSocket 图传 + HTTP API 转发，单后端实现（无需抽象层）"
+        - "设备注册表、token 校验、session 路由、健康上报落盘"
+    - path: "controller/"
+      purpose: "Win10 控制端 UI（step_11）：canvas 显示视频 + 虚拟按钮 + 标定模式 + 健康面板"
+      contents:
+        - "index.html / app.js: 通过统一接口连 broker，视频源可替换为 mock"
+        - "health_panel: 字段定义引用 controller.health_panel.fields"
+    - path: "firmware/"
+      purpose: "ESP32 固件（step_3~step_10）：CameraWebServer 改造、BLE HID、HTTP API、WebSocket 推流"
+      contents:
+        - "main/: 主循环、共存调优、看门狗"
+        - "ble_hid/: Digitizer 描述符与 5 字节 report 打包（引用 shared/coords.*）"
+        - "camera/: OV2640 采集与 MJPEG 编码"
+    - path: "tools/"
+      purpose: "离线工具与 mock：标定图生成、mock 视频源、合成 H 生成器"
+      contents:
+        - "mock_stream.py: 走与真实端点一致的 WebSocket 帧格式推送样例帧"
+        - "gen_calib_grid.py: 生成全屏标定网格（android_prep 用）"
+        - "fake_h.py: 给定已知 H 生成合成标定点（标定求解器自测用）"
+    - path: "tests/"
+      purpose: "Python 自动化断言（step_13）：UC1~UC5 + 坐标链路断言 + 证据落盘"
+      contents:
+        - "test_coords.py: 换算模块已知映射用例"
+        - "test_calib.py: 用 fake_h 生成的合成点校验求解器精度"
+        - "fixtures/ 软链或复制：合成 H、样例帧、标定图"
+    - path: "fixtures/"
+      purpose: "测试夹具：合成 H 矩阵、样例 JPEG 帧、标定图 PNG、已知映射用例"
+    - path: "docs/"
+      purpose: "与代码分离的文档：部署指南、README、架构图"
+
+  seams:
+    # 到货后只需替换以下三处，其余全部保留
+    - id: "seam_video_source"
+      mock_now: "tools/mock_stream.py 走与真实端点一致的 WebSocket URL 与 MJPEG 帧格式推送样例帧"
+      replace_with: "firmware 的 /api/v1/stream 真实 MJPEG 流"
+      constraint: "mock 必须走与真实端点一致的接口，否则 controller 层会重写"
+    - id: "seam_h_matrix"
+      mock_now: "tools/fake_h.py 生成的合成 H（已知单应矩阵，叠加可控噪声）"
+      replace_with: "真机 9 点标定求得的 H 与 residual_offset"
+      constraint: "仅替换数据，换算函数本身不依赖真实 H 即可开发与测试"
+    - id: "seam_command_dispatch"
+      mock_now: "换算结果打印到日志 / 写入落盘文件，不下发硬件"
+      replace_with: "打包为 5 字节 BLE report 经 BLE HID 下发"
+      constraint: "report 布局 [state][X_MSB][X_LSB][Y_MSB][Y_LSB]，state=0x03/0x00"
+
+# ------------------------------------------------------------
+# 到货前可前置工作清单 —— 实物未到手时即启动，最大化压缩到货后硬件接触时间
+# ------------------------------------------------------------
+pre_arrival_work:
+  principle: >
+    区分代码依赖与数据依赖：多数 step 看似依赖 ESP32，实际只依赖「真实 H 矩阵 / 真实视频流」
+    这类数据；这些数据可先以 mock 替代，到货后仅替换三处接缝（见 workspace_layout.seams）。
+  tiers:
+    - id: "A"
+      name: "零硬件依赖，产出物直接可用"
+      items:
+        - id: "A1"
+          work: "坐标换算模块 CAP→SCR→HID"
+          step: "step_8"
+          hardware: "无"
+          deliverable: "shared/coords.* 纯函数 + 单元测试"
+          seam: "seam_h_matrix（用合成 H 测试）"
+          status: "done"
+          artifact: "shared/coords.py"
+        - id: "A2"
+          work: "标定求解器：单应矩阵求解 + leave-one-out 残差校验（>3px 判失败）+ residual_offset 迭代"
+          step: "step_7（算法部分）"
+          hardware: "无"
+          deliverable: "tools/fake_h.py + tests/test_calib.py"
+          seam: "seam_h_matrix"
+          status: "done"
+          artifact: "tools/fake_h.py + tests/test_calib.py"
+        - id: "A3"
+          work: "传输层接口定义：connect / send_command / stream_frames 三个接口"
+          step: "step_8b"
+          hardware: "无"
+          deliverable: "接口契约（单后端实现，无抽象层）"
+          note: "v1.8 已简化：只保留接口与 lan_direct/outbound 单一后端，不实现多后端抽象"
+          status: "done"
+          artifact: "shared/transport.py"
+        - id: "A4"
+          work: "API 契约与 JSON schema"
+          step: "step_9"
+          hardware: "无"
+          deliverable: "shared/api_schema.yaml"
+          endpoints: ["/api/v1/tap", "/api/v1/swipe", "/api/v1/key", "/api/v1/calibrate/point", "/api/v1/calibrate/commit", "/api/v1/health"]
+          status: "done"
+          artifact: "shared/api_schema.yaml"
+        - id: "A5"
+          work: "broker 服务端（MVP 全量中转）"
+          step: "step_14"
+          hardware: "无（可用模拟设备跑通注册与转发）"
+          deliverable: "broker/ 可运行服务"
+          status: "done"
+          artifact: "broker/relay.py + broker/server.py + tests/test_broker.py"
+        - id: "A6"
+          work: "Win10 控制器 UI"
+          step: "step_11"
+          hardware: "无（视频源用 mock）"
+          deliverable: "controller/ 可运行 UI"
+          status: "done"
+          artifact: "controller/app.py + mock_device.py + static/index.html + tests/test_controller.py"
+        - id: "A7"
+          work: "健康面板数据契约"
+          step: "step_12（部分）"
+          hardware: "无"
+          deliverable: "字段定义，引用 controller.health_panel.fields"
+          status: "done"
+          artifact: "shared/api_schema.yaml (/api/v1/health) + controller.health_panel.fields"
+        - id: "A8"
+          work: "自动化断言框架"
+          step: "step_13（框架部分）"
+          hardware: "无"
+          deliverable: "tests/ UC1~UC5 断言 + 证据落盘模板，先对 mock mapper 跑"
+          status: "done"
+          artifact: "tests/assertions.py + tests/test_assertions.py（58 例全绿，含 UC1~UC5）"
+
+    - id: "B"
+      name: "只需 Y71t（无需待购物料）"
+      items:
+        - id: "B1"
+          work: "android_prep 全部必做项：指针位置、息屏策略、亮度/主题"
+          step: "android_prep"
+          hardware: "仅 Y71t"
+          deliverable: "README 一次性准备清单"
+          note: "规格明确：不做这些后续全部无法验证"
+          status: "partial"
+          artifact: "docs/android_prep.md（逐项勾选清单已生成，待在 Y71t 上执行）"
+          blocked_by: "需用户在 Y71t 上逐项操作"
+        - id: "B2"
+          work: "屏幕可用区实测并回填 target_device"
+          step: "Q2.remaining_action"
+          hardware: "仅 Y71t"
+          deliverable: "app 矩形像素回填，避免后期误判为标定失败"
+          status: "pending"
+          blocked_by: "需 Y71t 实物 + 实测屏幕可用区"
+        - id: "B3"
+          work: "制作标定图并在手机浏览器实际打开验证"
+          step: "step_7 准备"
+          hardware: "仅 Y71t"
+          deliverable: "确认全屏无 UI 残留、AMOLED 黑不发光取不到特征"
+          status: "partial"
+          artifact: "fixtures/calib_grid.png（3x3 网格已生成，待 Y71t 浏览器验证）"
+          blocked_by: "需 Y71t 浏览器实操"
+        - id: "B4"
+          work: "屏幕常亮放电速率实测"
+          step: "step_6b（一半工作量）"
+          hardware: "仅 Y71t + 5V/1A 充电器 + 智能插座"
+          deliverable: "补电窗口，目标 SOC 45-65%"
+          status: "pending"
+          blocked_by: "需 Y71t + 5V/1A 充电器 + 智能插座实测放电速率"
+        - id: "B5"
+          work: "「指针位置」读数预演"
+          step: "android_prep 验证"
+          hardware: "仅 Y71t"
+          deliverable: "确定坐标链路地面真值读取方式"
+          status: "pending"
+          blocked_by: "需 Y71t 开启指针位置后实操读数"
+
+    - id: "C"
+      name: "纯调研与环境（到货当天立刻能用）"
+      items:
+        - id: "C1"
+          work: "Arduino-ESP32 / ESP-IDF 工具链安装（无板也能编空固件验证）"
+          step: "step_3 环境"
+          hardware: "无"
+          status: "partial"
+          note: "已探测：本机 idf.py / arduino-cli 均未装；安装脚本规划见 docs/partition_pin_plan.md，待执行"
+          artifact: "docs/partition_pin_plan.md（含 ESP-IDF/Arduino 接入预案）"
+        - id: "C2"
+          work: "USB 串口驱动安装"
+          step: "step_2"
+          hardware: "无"
+          status: "partial"
+          artifact: "（USB 串口驱动为 Windows 设备管理器手动安装项，待实物到货执行）"
+        - id: "C3"
+          work: "复核 Autfy/ESP32-BLE-HID 的 descriptor"
+          step: "step_4 前置"
+          hardware: "无"
+          note: "确认 0-10000 上界与 [state][X_MSB][X_LSB][Y_MSB][Y_LSB] 布局与规格一致；规格明确：不要自行编造其它上界"
+          status: "done"
+          artifact: "docs/ble_descriptor_review.md（复核清单已生成，待库接入时逐项核对）"
+        - id: "C4"
+          work: "依赖许可证清点（R18）"
+          step: "scalability.licensing"
+          hardware: "无"
+          note: "纯调研，属规格内既定的开源分发前置动作"
+          status: "done"
+          artifact: "docs/dependency_licenses.md（已清点 Python 侧；Autfy 许可证待到货复核，见 R18）"
+        - id: "C5"
+          work: "PSRAM 分区表 / 引脚配置预案"
+          step: "step_1"
+          hardware: "无"
+          note: "到货核对板型后可立即套用"
+          status: "done"
+          artifact: "docs/partition_pin_plan.md（N16R8 引脚与 PSRAM 分区预案）"
+
+    - id: "D"
+      name: "明确不要前置（会返工）"
+      items:
+        - id: "D1"
+          work: "任何依赖真实 H 矩阵的调参"
+          reason: "H 由安装后的几何决定，提前调参无意义"
+        - id: "D2"
+          work: "光学距离锁定与调焦（step_6 顺序不可颠倒）"
+          reason: "依赖实拍，且步骤 (a)~(d) 强顺序"
+        - id: "D3"
+          work: "机构件最终尺寸"
+          reason: "除非做成可调版本；建议先画可调草稿，锁死后出终版"
+        - id: "D4"
+          work: "把 SCR 常量硬编码进代码"
+          reason: "必须等 B2 实测后回填"
+
+  first_actions:
+    - "task_1: 建立 workspace_layout 目录骨架（含 README 占位）"
+    - "task_2: 实现 A1 坐标换算核心 + A2 标定求解器（零外部依赖，仅标准库 + numpy）"
+    - "task_3: 完成 A3/A4 接口与 API schema 契约"
+    - "task_4: 推进 A5 broker 与 A6 controller（mock 视频源即可端到端联调）"
+
+# ------------------------------------------------------------
+changelog:
+  - version: "1.9.2"
+    date: "2026-09-29"
+    summary: >
+      【进度回填】pre_arrival_work 全部 18 个前置项补全 status/artifact/blocked_by。
+      A1~A8 零硬件核心全部 done（坐标换算 / 标定 / 传输 / API schema / broker / 控制器 UI /
+      健康面板契约 / 断言框架）；B 档 B1 准备清单与 B3 标定图已生成（partial），
+      B2/B4/B5 标 pending（依赖 Y71t 实物操作）；C 档 C3 descriptor 复核、
+      C4 依赖许可证清点、C5 分区引脚预案文档已生成（done），C1/C2 工具链与驱动探测标 partial。
+      新增工程产物：tests/assertions.py、docs/{android_prep,ble_descriptor_review,
+      dependency_licenses,partition_pin_plan}.md、fixtures/calib_grid.png、tools/gen_calib_grid.py。
+      全量测试 58/58 通过。版本升至 1.9.2。
+    changes:
+      pre_arrival_work_progress: >
+        每个 item 增加 status（done / partial / pending）、artifact（已落地文件）、
+        blocked_by（待硬件操作项），到货后只需替换三处接缝（见 workspace_layout.seams）。
+      new_engineering_artifacts: >
+        A8 断言框架（UC1~UC5 + 证据落盘）、4 份 C 档调研文档、Y71t 准备清单、3x3 标定图、标定图生成脚本。
+      scope: "纯进度回填与文档产物，无架构变更；与商业保护计划三项（D1/D2/D3）保持分离、未并入"
+  - version: "1.9.1"
+    date: "2026-09-29"
+    summary: >
+      【一致性修正，不改动架构决策】将 implementation_order.step_8b 的「先只实现 lan_direct」
+      与 controller.no_external_server / backend 的 LAN-direct 假设，对齐到 execution_policy
+      的 MVP「全量中转」（ESP32 出站 → broker，视频+指令经 broker 走 TCP/WebSocket）。
+      同步修正 shared/api_schema.yaml 注释，将「服务端换算」改为「控制端（Win10）换算」
+      （与 controller.coordinate_mapper_module.location 一致）。版本升至 1.9.1。
+    changes:
+      consistency_fix: >
+        step_8b 后端由 lan_direct 改为 outbound_relay；controller.backend 明确为
+        broker 中转形态；api_schema 注释澄清坐标换算发生在控制端。
+      scope: "纯文字一致性，无新增功能；为 A3 传输层抽象与 A5 broker 实现定死接口边界"
+  - version: "1.9.0"
+    date: "2026-09-29"
+    summary: >
+      【工程启动前置】实物到货前即启动可前置工作，最大化压缩到货后的硬件接触时间。
+      新增顶层章节 workspace_layout（工程目录规划，定义 shared / broker / controller /
+      firmware / tools / tests / fixtures / docs 分区与三条接缝约定：视频源 mock / H 矩阵 / 指令下发）
+      与 pre_arrival_work（到货前可前置工作清单，分 A/B/C/D 四档，逐项标注对应
+      implementation_order 步骤与硬件依赖；D 档为明确不要前置、会返工的项目的）。
+      两项均服务于「跑通第一」，不进入商业内容。规格版本升至 1.9.0。
+    changes:
+      new_sections: >
+        新增 workspace_layout 与 pre_arrival_work 两个顶层章节（顶层章节 28 → 30）。
+        pre_arrival_work 明确区分代码依赖与数据依赖，并定义到货后仅替换三处接缝的接缝策略。
+      scope: "纯规划与契约，不含工程代码实现；工程实现由独立任务推进"
+
+  - version: "1.8.0"
+    date: "2026-09-29"
+    summary: >
+      【执行策略】确立「跑通第一」为当前唯一优先级，并据此把 MVP 传输回退到最简形态。
+      此前 v1.5-v1.7 连续三轮架构前瞻设计（可插拔传输 / P2P 优先 / 三级降级 / UDP 分片 /
+      打洞成功率测算）本身成立，但会显著拉长首次跑通时间，
+      且关键的打洞成功率在真网下本就测不准 —— 在跑通之前优化一条尚未存在的链路是本末倒置。
+    changes:
+      new_section: >
+        新增顶层章节 execution_policy（顶层章节 27 → 28），固化四条内容：
+        原则（跑通前不接受降低成本 / 降低开销 / 提高优雅度类方案）、
+        理由（含对上述三轮前瞻设计的自我修正）、
+        MVP 传输决策、以及重新评估的触发条件。
+        同时在 project 下新增 current_priority 字段，使优先级在文件头部即可见。
+      mvp_transport: >
+        **MVP 传输明确为全量中转**：ESP32 主动出站连 broker，视频与指令都经 broker，
+        走 TCP/WebSocket。完全复用现有 MVP 设计（WebSocket 图传 + HTTP API），
+        改动最小、依赖最少、排障最直接。MVP 阶段只有少量测试设备，全量中转成本可忽略。
+      parked: >
+        五项目标挂起到跑通之后，架构结论保留、仅推迟实施：
+        P2P 优先与三级降级、UDP 分片与整帧丢弃策略、打洞成功率与中继占比专项测量、
+        带宽成本模型与免费额度设计、传输层多后端抽象的完整实现（只留接口 + 单一后端）。
+        对应地把 broker_service.transport_architecture 标记为 PARKED，R21 / R22 状态改为 PARKED。
+      guardrails: >
+        区分「优化」与「开放前置条件」：前者可推迟，后者不可。
+        E2E 加密（R20）、合规与运营可持续性（R19）、每设备唯一凭据这三项
+        不阻塞跑通，但在官方 broker 承载真实用户之前必须完成。
+        内测阶段可用 TLS + 每设备 token 过渡，但不得对外开放。
+      trigger: >
+        重新启用挂起项的条件：端到端链路稳定跑通，且出现 broker 带宽成本成为实际支出项 /
+        用户数增长到中继占比有意义 / 中继路径下视频延迟不可接受 —— 三者任一。
+    new_sections: "execution_policy（原则 / 理由 / MVP 传输决策 / 挂起项 / 前置护栏 / 重新评估触发）"
+    status: "策略已确认并已写入规格；MVP 待按全量中转实施"
+
+  - version: "1.7.0"
+    date: "2026-09-29"
+    summary: >
+      确认并细化 v1.6 提出的传输架构：**broker 定位为「信令服务器 + 中继兜底」，
+      数据流 P2P 优先**。本版把"方向"落成"可实施的设计"，并同时修正了一个
+      过于乐观的预期 —— P2P 打洞在中国家宽 CGNAT 环境下并非必然成功。
+    changes:
+      traffic_split: >
+        核心是按流量特性分流，而不是所有流量走同一条路：
+        控制指令（几十字节、必须可靠）**始终走 broker** 的 TCP 长连接；
+        视频（Mbps 级、可容忍丢帧）**优先 P2P**。
+        指令小到带宽成本可忽略，用它换可靠性非常划算；视频才是成本主体。
+      three_tier: >
+        视频路径优先级：**IPv6 直连 › IPv4 UDP 打洞 › broker 中继**。
+        把 IPv6 放在打洞之前是因为 IPv6 无 NAT，才是真正稳定的零中继路径。
+      session_flow: >
+        固化 6 步会话流程（设备出站注册 → 控制端取注册表 → broker 交换 endpoint →
+        试 IPv6 → 试 IPv4 打洞 → 失败回落中继），并规定两条运维纪律：
+        NAT 映射需定期 keepalive 维持；**路径选择必须由控制端显式上报，
+        禁止设备静默切换**（否则"画面变卡"会被误诊为摄像头或 WiFi 问题）。
+      udp_fragmentation: >
+        量化了改走 UDP 的代价：VGA 单帧 20-60 KB 需分成数十片，
+        JPEG 不可部分解码，**丢任意一片整帧报废**。单帧 15 KB / 0.5% 丢包下存活约 94%，
+        40 KB 降至约 85% —— 单帧大小直接决定有效帧率。
+        但 MJPEG 每帧独立、无帧间依赖，丢帧只降帧率不花屏，这正是 UDP 可接受的理由。
+      honest_correction: >
+        **修正了"带宽成本大幅下降"的乐观表述**：中国家庭宽带 IPv4 相当比例处于
+        运营商级 NAT 之下，对称 NAT 会导致打洞失败。因此收益是有条件的，
+        中继占比可能显著高于乐观估计，成本模型必须按"部分用户走中继"建模并保留余量。
+        这一项无法靠桌面推算收敛，已列为真实网络环境的专项测量项。
+    new_sections: "broker_service.transport_architecture（分流 / 三级降级 / 会话流程 / UDP 分片 / NAT 现实）"
+    new_risks: >
+      R21 打洞成功率不确定导致中继占比与成本偏离（HIGH）；
+      R22 UDP 分片丢包导致整帧报废与有效帧率下降（MEDIUM）
+    measurement_required: "真实家宽 / 4G 环境下的打洞成功率与中继占比统计 —— 该数据直接决定成本模型是否成立"
+    status: "架构已确认；R21 需真网测量，R22 需实测标定"
+
+  - version: "1.6.0"
+    date: "2026-09-28"
+    summary: >
+      结清 v1.5 遗留的 broker 归属问题：**由项目方提供**（官方托管实例，用户开箱即用）。
+      这一决定带来本项目迄今集中度最高的一项风险，因此本版的核心不是"怎么建 broker"，
+      而是"如何在项目方运营 broker 的前提下仍然不辜负用户信任"。
+    changes:
+      decision: "broker 由项目方运营；定位为官方托管实例，用户无需自建"
+      new_problem: >
+        项目方从此在技术上可以读取所有用户的手机屏幕并向任意设备下发指令（R20）。
+        用户自建时运营方就是用户自己，托管后这个主体变成了项目方 ——
+        这是本决策引入的新问题，且它不是运维问题，是信任问题。
+      reference_model: >
+        采用 Matrix / Synapse 式结构：开源协议 + 开源服务器实现 + 官方托管实例 + 允许自托管。
+        这样官方托管是便利而非锁定，也就不会重蹈本项目本来要反对的厂商云的覆辙。
+      three_preconditions: >
+        官方托管成立的三条硬前提：① 端到端加密，broker 只转发密文、永不解密；
+        ② 自托管是一等公民，官方实例只是可选项（否则一旦停服所有设备变砖）；
+        ③ 成本与合规可持续。缺任何一条都不如让用户自建。
+      architecture_refinement: >
+        把 broker 由"全量中转"细化为**信令服务器 + 中继兜底**（WebRTC 的 signaling + TURN 模型）：
+        设备仍主动出站注册（保持零现场配置），但数据流优先 P2P，打洞失败才走 broker 中继。
+        这一步同时收敛带宽成本与信任风险 —— 即便走中继，broker 拿到的仍是密文。
+      e2e_encryption: >
+        密钥带外交换（配网时由控制端生成 PSK，经 BLE provisioning 安全通道或扫码注入，
+        禁止经 broker 传递密钥）；视频与指令统一 AEAD。
+        ESP32-S3 有 AES/SHA/RSA/ECC 硬件加速，开销可接受但**必须实测**，
+        需并入 coexistence 的 1 小时压测一并评估。
+      economics: >
+        量化了带宽成本：单设备约 0.9 GB/小时（2 Mbps、按需拉流）；
+        1000 日活每天 1 小时 ≈ 26 TB/月 ≈ ¥1.3 万-2.6 万/月。
+        这是随用户数线性增长且无法优化消除的成本，商业模式未定前不应承诺永久免费无限流量。
+      compliance: >
+        境内运营需 ICP 备案；屏幕内容属个人信息，触发《个人信息保护法》义务
+        （告知、最小必要、留存期限与删除）。合规会反向约束架构，例如日志不得留存可识别内容。
+    new_sections: "broker_service（托管模式 / 三条前提 / 架构细化 / 经济学 / 合规 / 对 public_exposure 的影响）"
+    new_risks: "R19 运营可持续性与合规 / R20 broker 运营方集中信任（E2E 是其唯一缓解）"
+    updated_risks: "R16 上调为 HIGH —— 故障责任由用户转移到项目方；新增 SLA 与停服预案要求"
+    security_impact: >
+      security 新增 threat_actors，按"主体能造成什么后果"而非"攻击手法"组织，
+      明确列出 broker 运营方这一 v1.6 新增主体。
+    status: "决策已定；E2E 加密需在 MVP 阶段实施不可延后；商业模式、地域与 SLA 仍为 open_items"
+
+  - version: "1.5.0"
+    date: "2026-09-28"
+    summary: >
+      【目标变更】项目目标由「自用 / 小规模」明确为「开源分发 / 大规模异地部署」。
+      这是本项目迄今最大的一次方向性调整：MVP 的技术路线不变，
+      但网络层默认路径、设备管理模型与若干 MVP 设计约束随之改变。
+    changes:
+      trilemma_settled: >
+        在 scalability 的三难困境（零服务器 / 零公网暴露 / 部署友好，三者最多取二）中
+        明确选择 B 边：**放弃「零服务器」，保住「零公网暴露 + 部署友好」**。
+        理由是大规模部署的本质诉求是「一个中心管 N 个站点」，只有设备主动出站
+        才能做到零现场配置且设备自身不暴露在公网。
+      default_path_changed: >
+        默认传输路径由 subnet router（lan_direct）改为设备主动出站（outbound_relay）。
+        network.server_required 由 false 改为 conditional；public_exposure 仍保持 false。
+        subnet router 降级为 lan_direct 后端下的一种实现，network.esp32_access 全节
+        保留为该后端的部署指南，不再作为必选项。
+      transport_abstraction: >
+        确认传输层抽象为必须项，并规定其落地时机：implementation_order 新增 step_8b，
+        **必须早于 step_9（HTTP API）**，否则后续全部改造都变成重构。
+        抽象只暴露 connect / send_command / stream_frames / report_endpoint。
+      scale_requirements: >
+        新增 scalability.deployment_at_scale_requirements，指出目标变更后
+        真正的瓶颈从"网络怎么打通"转移到"设备怎么管"：配网 / 每设备身份 / 设备注册表 /
+        OTA / 标定平民化 / 板级适配 / 许可证共七项，其中前三项在 MVP 设计中不成立或明显不足。
+      calibration_for_end_users: >
+        提出一键自动标定方案：ESP32 提供全屏标定网格页面，用 Y71t 自带浏览器打开全屏显示，
+        ESP32 拍一帧后自动检测网格交点求解 H。无需人工点 9 次，且不违反 non_goals
+        （不装 App、不依赖 ADB）—— 这是开源分发 adoption 的关键门槛。
+    new_risks: "R16 broker 单点故障与流量成本 / R17 大规模部署能力缺失（配网·身份·OTA） / R18 依赖许可证与上游硬依赖"
+    milestone_impact: >
+      M4 的验收对象改为 outbound_relay 零现场配置上线，并新增"区分 broker 不可达与设备不可达"
+      与"每设备唯一凭据"两条；implementation_order.step_14 同步改写。
+    open_sub_decision: >
+      broker 由谁提供仍未定：用户自建（自托管，门槛高）vs 项目提供官方托管（开箱即用但中心化）。
+      建议在项目 README 阶段之前定。
+    status: "目标已定；大规模部署的六项能力尚未排入 milestones，需下一轮规划"
+
+  - version: "1.4.0"
+    date: "2026-09-28"
+    summary: >
+      结案 open_questions.Q3 / Q4 / Q5 / Q6 / Q7 —— 至此 Q1-Q7 全部完成桌面前置结案，
+      剩余项为可程式化的真机验证，不再有阻塞性未知。
+    changes:
+      Q3: >
+        BLE HID 与 WiFi 共存：官方共存矩阵把 Wi-Fi Connected + BLE Connected 标为 Y
+        且各占约 50% 时隙，故风险从"能否共存"降级为"稳态 QoS"。
+        新增 tech_stack.coexistence（tuning_knobs / acceptance_test / degradation_path），
+        并指出真正的瓶颈可能是 PSRAM 带宽而非射频时隙。R5 细化，接受标准升级为 1 小时量化压测。
+      Q4: >
+        息屏不断连：HOGP 由系统蓝牙栈处理而非 App GATT，Doze/App Standby 不适用；
+        BLE 控制器有独立供电域可保活。R4 由 MEDIUM 降 LOW。
+        同时识别出替换问题——"息屏后 HID 触控能否唤醒屏幕"仍需真机验证。
+      Q5: >
+        官方无旁路供电承诺，按不支持处理，并给出 Tier A/B/C 三层方案。
+        默认 Tier A（保留电池 + 5V/1A 慢充 + 智能插座窄 SOC 窗口），
+        决定性理由是断电容错而非电池寿命。同时纠正了两个化学直觉错误
+        （浅循环不等于总吞吐更高；满充停留才是主因）。新增 R15（智能插座单点故障）。
+      Q6: >
+        确认唯一解是同网段常开的 subnet router（非二选一），禁止用 Android 手机充当。
+        补齐四个必踩坑：accept-routes 平台不对称、SNAT 必须保持默认、
+        key expiry 静默失效（新增 R14）、不得通告 0.0.0.0/0。
+      Q7: >
+        【重要纠错】8cm 装不下整屏：屏幕显示区 67.13×149.17mm，66° 镜头 8cm 处仅覆盖约 56% 长边。
+        新增 hardware.optics 章节（几何推导 / 距离表 / 现场测量法 / 调焦步骤 / 景深），
+        mounting.camera_distance 由 8-12cm 改为 13-16cm。新增 R12（出厂合焦距离过远）。
+      bom_rewrite: >
+        把 bom 由 required/recommended/optional 三段重写为可直接下单的六组
+        （owned / electronics_core / mechanics_optics / powered_end_devices / decide_first / later），
+        并新增 purchase_spec_checklist 与 total_estimate。
+        补回了四组此前完全缺失的物料：第二颗摄像头（排障用）、5V/1A 慢充头（Q5 Tier-A）、
+        本地定时智能插座（Q5/R15）、13-16cm 工作距所需的刚性悬臂与调焦耗材（Q7/R12）。
+        作废旧口径「总价 <¥200」，新口径 ¥225-700（中位约 ¥300）。
+    corrections:
+      - "纠正 v1.1-v1.3 的表述错误：径向畸变不能被单应矩阵吸收（H 只描述平面射影变换）。
+         已改写 hardware.camera.lens_distortion 并新增 R13。"
+      - "修复 risk_register.R7 中的 garbled 英文残留。"
+      - "implementation_order.step_6 重写为有序的光学工位，并新增 step_6b 供电工位。"
+      - "新增 scalability 顶层章节：记录 subnet router 的可部署性代价，以及
+         零服务器 / 零公网暴露 / 部署友好「三者最多取二」的三难困境；
+         给出三条路与推荐的传输层抽象方向，status 为 PROPOSED 待用户确认。"
+      - "新增 network.esp32_access.self_hosted_relay_comparison：量化对比
+         自建公网跳板与 subnet router（带宽路径 / 攻击面 / 成本形态 / 流量预算 /
+         架构原则），结论为选 subnet router，并给出何时才该重新考虑跳板。"
+      - "细化 network.esp32_access.status 的措辞：「唯一解」改为「在 server_required=false
+         约束下的唯一解」，并新增 scope_note 说明远程控制在架构上必然需要一个常在线中间人，
+         四个候选（厂商云 / 自带客户端 / 本地常开节点 / 公网跳板）中 ESP32 只能走后两者。"
+    new_sections: "hardware.optics / tech_stack.coexistence；tech_stack 新增 coex_and_stack 与 networking_vpn 两组参考"
+    new_risks: "R12 合焦距离 / R13 径向畸变 / R14 Tailscale key expiry / R15 智能插座单点故障"
+    status: "剩余全部为可执行的真机验证项；无需再做桌面调研"
+
+  - version: "1.0.0"
+    date: "2026-09-28"
+    summary: "初版规格，定义硬件选型、视频/输入/网络链路、MVP 路径"
+  - version: "1.1.0"
+    date: "2026-09-28"
+    summary: >
+      新增 coordinate_mapping 顶层章节（三级坐标系 + 强制单应标定 + 误差预算与验收）；
+      input.ble_hid 新增 coordinate_mode 决策项，明确相对/绝对坐标的取舍与门禁；
+      implementation_order 插入坐标模式决策与标定两个门禁步骤；新增 open_questions
+  - version: "1.3.0"
+    date: "2026-09-28"
+    summary: >
+      【Q2 结案】屏幕分辨率由 vivo 官方参数页确认为 1080×2400 / 20:9 / AMOLED / 60Hz，
+      并补齐机型底座信息（V2102A、蓝牙 5.1、OTG 官方确认支持、4000mAh/3920mAh、~409ppi）；
+      据此新增 coordinate_mapping.frame_coverage 量化取景错配，
+      发现默认横向 VGA 会浪费约 66% 画面宽度，建议摄像头竖置 90°；
+      calibration 新增 frame_source（标定统一用 UXGA 单帧）与 residual_offset（H 之后的常量修正）。
+      【Q1 结案】绝对坐标可行，但必须走 Digitizer 触摸屏描述符而非绝对鼠标，
+      已固化 10000 逻辑范围 / Report ID 0x01 / 5 字节报告 / state 0x03-0x00 的完整规格；
+      HID 上界由此确认，transform_chain.step_2 不再留未知量。
+      library 选型由 404 的 asterics 改为 Autfy/ESP32-BLE-HID（键盘+触控复合、宣称支持 WiFi 共存）。
+      连同新增 coordinate_mode.known_gotchas（含「改描述符必须重配对」）、risk R1 降级、
+      新增 R11（单人维护依赖，描述符规格因此内联留档而非只留链接）、
+      milestones.M2 由「门禁」降级为「冒烟」。
+
+  - version: "1.2.0"
+    date: "2026-09-28"
+    summary: >
+      补齐工程落地与治理维度：android_prep（被控端准备清单，含长期插电风险）、
+      hardware.pinout（DVP 接线参考）、bom（采购清单）、use_cases（UC1~UC5 具体用例）、
+      latency_budget、reliability（看门狗/重连/降级/健康检查）、security（访问控制与威胁模型）、
+      risk_register（R1~R10）、milestones（M0~M4 出口条件）、naming_conventions、changelog；
+      API 端点统一为 /api/v1/*
+
+# ------------------------------------------------------------
+# EOF

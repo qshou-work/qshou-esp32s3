@@ -1,0 +1,91 @@
+{
+  "uc_id": "UC1",
+  "name": "基本导航",
+  "covers": "BLE HID 基础通路是否被 Y71t 接受",
+  "started_at": 1791900879.159563,
+  "ended_at": 1791900879.1596205,
+  "duration_s": 5.7e-05,
+  "passed": true,
+  "checks": [
+    {
+      "name": "device 接受 BACK",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "device 接受 HOME",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "device 接受 tap",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "tap report 长度为 5",
+      "ok": true,
+      "detail": "len=5"
+    },
+    {
+      "name": "tap state == DOWN",
+      "ok": true,
+      "detail": "state=0x3"
+    },
+    {
+      "name": "HID 坐标在 [0,10000]",
+      "ok": true,
+      "detail": "(5000,5000)"
+    }
+  ],
+  "checks_passed": 6,
+  "checks_total": 6,
+  "note": "",
+  "steps": [
+    {
+      "label": "key:BACK",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "BACK"
+        }
+      }
+    },
+    {
+      "label": "key:HOME",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "HOME"
+        }
+      }
+    },
+    {
+      "label": "tap_desktop",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    }
+  ]
+}

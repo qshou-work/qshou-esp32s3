@@ -1,0 +1,366 @@
+{
+  "uc_id": "UC5",
+  "name": "长时稳定性",
+  "covers": "reliability 与 coordinate_mapping 的联合验证",
+  "started_at": 1790688728.1678698,
+  "ended_at": 1790688728.168094,
+  "duration_s": 0.000224,
+  "passed": true,
+  "checks": [
+    {
+      "name": "基线 tap 成功",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "12 次重复落点零漂移",
+      "ok": true,
+      "detail": "漂移次数=0"
+    },
+    {
+      "name": "步骤数 == 1+loops",
+      "ok": true,
+      "detail": "steps=13, expect=13"
+    },
+    {
+      "name": "所有 report 字节序列一致",
+      "ok": true,
+      "detail": "distinct=1"
+    },
+    {
+      "name": "全程 HID 坐标合法",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "checks_passed": 5,
+  "checks_total": 5,
+  "note": "",
+  "steps": [
+    {
+      "label": "tap_baseline",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_0",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_1",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_2",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_3",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_4",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_5",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_6",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_7",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_8",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_9",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_10",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    },
+    {
+      "label": "tap_11",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 1200,
+          "hid_report": [
+            3,
+            19,
+            136,
+            19,
+            136
+          ],
+          "hid_x": 5000,
+          "hid_y": 5000
+        }
+      },
+      "hid": [
+        5000,
+        5000
+      ],
+      "report": "0313881388"
+    }
+  ]
+}

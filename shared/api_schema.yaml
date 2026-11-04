@@ -1,0 +1,696 @@
+# shared/api_schema.yaml
+# 所有 /api/v1/* 请求/响应 JSON 契约（pre_arrival_work A4 交付物）
+# 命名遵循规格 naming_conventions.api：名词/动词短语、snake_case
+# 坐标字段必须带坐标系前缀（cap_*/scr_*/hid_*），禁止裸 x/y
+#
+# 🔴 2026-10-13（P5）本文件扩充为**设备全部控制面**的单一真源，覆盖 P0–P4：
+#   P0 自描述 /schema + Bearer 认证钩子 ｜ P1 GPIO ｜ P2 WiFi ｜ P3 BLE ｜ P4 WebSocket 事件
+# 纪律（tests/test_control_contract.py 钉死）：
+#   ① 本文件的每个 owner=firmware 端点都必须在 platform_net.c 的 ROUTES[] 里注册
+#      ——唯二例外：/gpio/{pin} 注册为通配 `/api/v1/gpio/*`；/events 是 WebSocket，
+#      必须用 HTTP_GET + is_websocket 单独注册，放进 ROUTES[] 会让握手永远不被处理。
+#   ② 每个端点都必须出现在 routes.c 的 handle_schema() 自描述里（Agent 只学 schema），
+#      反之亦然 —— 两份清单漂了就红。
+#   ③ owner 字段区分实现方：firmware=设备实现 / controller=仅控制器进程有。
+
+base: "/api/v1"
+auth:
+  header: "Authorization"
+  scheme: "Bearer"
+  note: >
+    🔴 实现口径（以固件 routes.c::require_auth 为准，勿只信本段文字）：
+    设备只从 **Authorization** 请求头读令牌，且必须形如 `Bearer <token>`
+    （routes.c 里 strncmp(auth,"Bearer ",7)==0）。历史上写的自定义头
+    `X-Auth-Token` **从未被实现**，已删除以免误导调用方。
+    开关 `g_control_auth` 为编译期常量、**默认 false**：开启后所有控制端点
+    返回 403 {"ok":false,"error":"unauthorized"}；公开端点
+    （GET /health、/sysinfo、/settings、/schema、/led）**始终**免鉴权。
+    对外开放前须按 execution_policy.guardrails 完成 E2E 加密（R20）。
+
+endpoints:
+  - path: "/tap"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      x: "int  # SCR 屏幕像素 X（冗余记录；相对鼠标下固件忽略坐标，仅做当前光标处点击）"
+      y: "int  # SCR 屏幕像素 Y"
+      duration_ms: "int  # 按下时长，默认 0"
+    note: >
+      相对鼠标模型：固件忽略 (x,y)，只在当前光标处播放「净零抖动点击」（见 routes.c handle_tap）。
+      控制器侧仍可把 (x,y) 当冗余信息回显，但真正落点取决于 ControllerState 维护的光标位置。
+
+  - path: "/swipe"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      # 🔴 固件只解析下面两个 waypoint 字段（routes.c::handle_swipe 读
+      # http_parse_swipe 的 hid_report_start/end）。控制器侧曾另有 x0/y0/x1/y1/
+      # duration_ms 语义，但设备**不认**这些键 —— 留在 request 里会让 Agent
+      # 生成设备静默忽略的参数，故只作背景说明，见 note。
+      hid_report_start: "int[5]  # 起点 5 字节 waypoint [state,Xmsb,Xlsb,Ymsb,Ylsb]"
+      hid_report_end: "int[5]  # 终点 5 字节 waypoint"
+    response:
+      ok: "bool"
+      dx: "int  # 固件差分得到的相对增量（HID count）"
+      dy: "int"
+      steps_eff: "int  # 实际采用的帧数（按位移预算展开后）"
+      step_ms_eff: "int  # 实际采用的帧间隔"
+      budget: "int  # 本条手势的位移预算 = steps_eff × 127"
+      shortfall: "int  # 1 = 预算确实覆盖不了请求位移；0 = 完整送达"
+    note: >
+      相对鼠标：控制器把 start 设为当前光标、end 设为目标（均经标定换算到虚拟 HID 空间），
+      打包成两个 5 字节 waypoint 下发；固件对 (end - start) 差分得到相对增量，
+      从而让 host 光标精确落到目标点。坐标系换算在控制端完成（见 shared/coords）。
+      「起点=当前光标、终点=目标、时长=预计耗时」这套 x0/y0/x1/y1/duration_ms
+      语义只在控制器内部成立；下发前必须先按 coords.CursorState 折算成上面
+      两个 waypoint，设备端不解析这四个键。
+      ⚠️ 位移预算（2026-10-01 真机实测确立）：BLE 鼠标线帧 X/Y 为 8-bit 有符号，
+      单帧上限 ±127，故可交付总位移 = 帧数 × 127。固件按 ceil(max(|dx|,|dy|)/127)
+      自适应展开帧数并同步下调 step_ms 以锁定总时长（≤1200ms，间隔不低于 15ms）。
+      调用方**必须读 shortfall**：为 1 表示这条位移没能走完，别再假设 {dx,dy} 已落地。
+
+  - path: "/key"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      key: "string  # HOME / BACK / 文本等"
+
+  - path: "/calibrate/point"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      index: "int  # 标定点序号 0-8"
+      cap_x: "float  # 相机检测到的 X 像素"
+      cap_y: "float  # 相机检测到的 Y 像素"
+    note: "上报第 index 个标定点的相机检测坐标；9 点采集完成后服务端求 H"
+
+  - path: "/calibrate/commit"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      device_id: "string"
+    response:
+      ok: "bool"
+      max_residual_px: "float  # 单点修正后最大残差，>3px 判失败"
+      loo_max_px: "float  # 留一法交叉验证最大残差"
+
+  - path: "/health"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "public"
+    response:
+      uptime_s: "int"
+      free_heap: "int  # 🔴 全 region 总可用堆（内部 DRAM + PSRAM，esp_get_free_heap_size 口径）；与 sysinfo.mem.heap_free（仅内部）不同口径，恒等式 health.free_heap ≈ sysinfo.mem.heap_free + sysinfo.mem.psram_free"
+      reset_reason: "string"
+      last_frame_ms: "int  # 距上次成功取帧的毫秒数"
+      wifi_rssi: "int"
+      ble_connected: "int  # 1=BLE HID 已连接"
+      gest_frames: "int  # 上一条手势的总帧数"
+      gest_dx: "int  # 上一条手势实际发出的净位移 X（只累加发送成功的帧）"
+      gest_dy: "int"
+      gest_jit_min: "int  # 帧间隔抖动 min/avg/max（ms），应≈请求的 step_ms"
+      gest_jit_avg: "int"
+      gest_jit_max: "int"
+      gest_sent: "int  # 成功发出的帧数"
+      gest_drop: "int  # 丢帧数；>0 = 点距不一致、总位移会偏"
+      io2_ledc: "int  # 仅表示 LEDC 配置函数返回过 OK，**不能证明有输出**"
+      io2_pad_high: "int  # 自检：驱动高时回读的 pad 电平"
+      io2_pad_low: "int  # 自检：驱动低时回读的 pad 电平"
+      io2_pad_now: "int  # LED 任务实测的 pad 当前电平"
+      io2_pad_pct: "int  # pad 高电平占比 0..100（与 duty 对账即可判 PWM 是否真到了 pad）"
+      io2_gpio_mode: "int  # 1=GPIO 直驱（默认），0=LEDC PWM"
+
+  - path: "/sysinfo"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "public"
+    note: >
+      设备信息面板（存储/内存/任务栈水位）。与 /health 分工：/health 是手势与
+      IO2 诊断遥测，本端点是资源水位。没有 CPU 负载百分比——IDF v6.1 已移除
+      esp_system_get_cpu_usage()，要拿 idle 占比必须开
+      CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS（改 sdkconfig = 全量重编 ~44min）；
+      免重编的替代是本端点的 tasks[].stack_free（栈剩余水位能直接预警栈溢出，
+      对排查 HID 抖动比粗略 CPU% 更有用）。
+      🔴 口径纪律：NVS 是条目制（nvs_stats_t 无 page 字段），字节数按 条目×32
+      估算，字段名一律带 _est 后缀以示区别；任务只报「历史最小剩余栈」，
+      不报栈容量——未开 configUSE_TRACE_FACILITY，没有公开 API 能拿到容量。
+    response:
+      ok: "bool"
+      storage_mounted: "int  # 恒为 0：storage(1MB) 分区从未被挂载，故报不出文件系统占用，绝不谎报"
+      entry_bytes: "int  # NVS 单条目固定 32 字节，用于把条目数换算成字节估算值"
+      nvs:
+        valid: "int  # 0=分区不存在或读取失败，下述字段无意义"
+        part_size: "int  # NVS 分区真实容量（字节，来自分区表）"
+        used_entries: "int  # 已占用条目数"
+        total_entries: "int  # 条目总容量"
+        free_entries: "int  # 剩余可用于数据的条目数"
+        namespace_count: "int  # 命名空间数量（qshou / nvs.net80211 / bt 等）"
+        used_bytes_est: "int  # 估算占用 = used_entries × 32"
+        cap_bytes_est: "int  # 条目容量上限 = total_entries × 32"
+      mem:
+        heap_free: "int  # 当前可用**内部**堆（不含 PSRAM；总可用 = heap_free + psram_free）"
+        heap_min_free: "int  # 内部堆运行以来最小水位（低水位预警，比当前值更有用）"
+        heap_largest: "int  # 内部堆最大连续可用块（与 heap_free 同口径）"
+        internal_total: "int  # 内部 RAM 堆区总量（与上面三项同口径）"
+        psram_total: "int  # 板载 8MB PSRAM；未启用时为 0"
+        psram_free: "int"
+        psram_largest: "int"
+      partitions: "array  # 分区表几何：{label,offset,size,app,data,mounted}；mounted 恒 0"
+      tasks: "array  # 关注任务的栈剩余水位：{name,stack_free}（字节，越小越危险）"
+
+  - path: "/led"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "public"
+    query:
+      io2: "int  # >=0 强制原始占空比（GPIO 模式经极性换算成开关）；-1 恢复自动（BLE 已连接才亮）"
+      pol: "int  # 1/0 运行时翻转 IO2 极性；-1 恢复编译期值（判错不必重烧）"
+      mode: "int  # 1=GPIO 直驱（默认），0=LEDC PWM 对照"
+    response:
+      ok: "bool"
+      io2_ledc: "int"
+      io2_pad_high: "int"
+      io2_pad_low: "int"
+      io2_pad_now: "int"
+      io2_pad_pct: "int"
+      io2_gpio_mode: "int"
+    note: >
+      现场处置端点（BLE 测试期间禁开串口，这是唯一不看日志就能查灯的手段）。
+      ⚠️ 2026-10-01 教训：本板 IO2 最终确认为**高电平点亮**，且 LEDC 在 GPIO2 上
+      出不来波形（pad 恒低），故默认走 GPIO 直驱；启动自检闪两下用的是 GPIO，
+      稳态交给 LEDC 后就没动静——见到这套症状先查 LEDC 抢占（相机 XCLK 占
+      TIMER_0/CHANNEL_0），不要再折腾极性。
+
+  - path: "/gesture"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      type: "string  # line | box | circle | dir | tap"
+      steps: "int  # 每条边/每段插值帧数，>=1（dir 类型会被固件按预算展开）"
+      step_ms: "int  # 帧间隔 ms（建议 60~120；dir 帧数变多时会被固件下调）"
+      dx: "int  # dir 专用：总相对位移 X（HID count）"
+      dy: "int  # dir 专用：总相对位移 Y"
+      press: "int  # dir 专用：0=纯移动；非零=按住拖拽"
+    response:
+      ok: "bool"
+      type: "string  # 实际执行的手势类型"
+      steps: "int  # 实际采用的帧数"
+      step_ms: "int  # 实际采用的帧间隔"
+      dx: "int"
+      dy: "int"
+      budget: "int  # 位移预算 = steps × 127"
+      shortfall: "int  # 1 = 预算覆盖不了请求位移"
+    note: >
+      设备端轨迹回放：一次 HTTP 触发，ESP32 以原生 BLE 速度在本地连发一串
+      相对鼠标 report，绕开控制端注入的限速。相对鼠标模型下轨迹由相对增量定义，
+      保证可见「按下→拖动→抬起」的连贯笔迹。
+      仅 type=dir 受位移预算约束（box/line/circle 是固定几何、不参与位移量）。
+      health 的 gest_dx/gest_dy 是该手势**实际成功发出**的净位移，可用于对账：
+      回包 {dx} 与实际 gest_dx 不相等即表示离线 delayed 丢帧（见 gest_drop）。
+
+  # ------------------------------------------------------------------
+  # 相对推进交互（摇杆 / 方向键）—— **控制器侧**端点，固件不实现
+  # 2026-10-02 决策：主交互 = 相对推进，不做「点画面」；见 controller/atoms.py
+  # 全部只复用固件已有的 POST /api/v1/gesture，**不新增固件路由**。
+  # ------------------------------------------------------------------
+  - path: "/atom/move"
+    method: "POST"
+    methods: ["POST"]
+    owner: "controller"
+    auth: "control"
+    request:
+      dx: "int  # 相对位移 X（HID count），>0 向右"
+      dy: "int  # 相对位移 Y，>0 向下"
+      speed: "string  # fine | normal | fast（缺省 fine）；映射到 step_ms"
+      press: "int  # 0=纯移动（默认）；非零=按住拖拽"
+    response:
+      ok: "bool"
+      op: "string  # move"
+      queued: "bool  # true=已入待发槽；false=覆盖了尚未发出的旧 tick（被合并）"
+      dx: "int  # 实际采用的（已按设备预算 ±25400 钳位）"
+      dy: "int"
+      speed: "string"
+      step_ms: "int"
+      in_flight: "bool  # 返回瞬间是否已有指令在飞"
+      pending: "bool"
+    note: >
+      **非阻塞**。摇杆按住会高频调用本端点，控制器用 latest-wins 合并器把请求压成
+      「飞行中最多 1 条 + 待发槽最多 1 条」，新 tick 覆盖旧 tick，**永不排队**
+      —— 否则松手后光标还会继续动。
+      光标信念**只在真正发出且成功后**按实际交付量推进：被合并掉的 tick 不推进，
+      回包 shortfall=1 时按 budget 等比缩放（对应「回包 echo 请求值会掩盖少走」的教训）。
+
+  - path: "/atom/drag"
+    method: "POST"
+    methods: ["POST"]
+    owner: "controller"
+    auth: "control"
+    request:
+      dx: "int"
+      dy: "int"
+      speed: "string"
+    response:
+      ok: "bool"
+      op: "string  # drag"
+      delivered_dx: "int  # 按 budget 校正后的实际交付量"
+      delivered_dy: "int"
+      shortfall: "int"
+      device: "object  # 固件原始回包"
+    note: >
+      **阻塞**的一次完整拖拽（down → move → up 单个原子手势）。摇杆的「拖拽模式」
+      采用「按住累加、松手一次性提交」，而不是连续 tick —— 连续 tick 会在每帧结束时
+      抬起，安卓会判定拖拽中断。若日后要真正的连续拖拽，需要在固件增加 hold 端点
+      （按下与抬起分离），当前**不做**。
+
+  - path: "/atom/click"
+    method: "POST"
+    methods: ["POST"]
+    owner: "controller"
+    auth: "control"
+    request: {}
+    response:
+      ok: "bool"
+      op: "string  # click"
+      device: "object"
+    note: >
+      **阻塞**。原地点击（转发 /gesture type=tap 的净零抖动点击）。
+
+  - path: "/atom/anchor"
+    method: "POST"
+    methods: ["POST"]
+    owner: "controller"
+    auth: "control"
+    request: {}
+    response:
+      ok: "bool"
+      op: "string  # anchor"
+      counts: "int  # 固定 -25000（两轴）"
+      cursor: "object  # 复位后的信念 {x:0,y:0}"
+      device: "object"
+    note: >
+      **阻塞**。撞角归零：向负方向推到底，host 把光标钳在左上角，随后把控制器侧
+      CursorState 复位到 (0,0)。这是**唯一不依赖视觉的绝对定位手段**，也是
+      相对推进模型下重建绝对定位的唯一途径。代价：固件按预算展开到 197 帧 × 15ms
+      ≈ **3 秒**，期间不要重复点击。
+
+  - path: "/atom/state"
+    method: "GET"
+    methods: ["GET"]
+    owner: "controller"
+    auth: "control"
+    response:
+      busy: "bool  # 是否有指令在飞"
+      pending: "bool  # 待发槽是否有货"
+      held: "bool  # 是否处于独占（barrier）中"
+      sent: "int  # 累计成功发送条数"
+      errors: "int"
+      coalesced: "int  # 被覆盖（合并丢弃）的 tick 数"
+      last: "object  # 最近一次设备回包"
+      cursor: "object  # 光标信念（虚拟 HID 空间 [0,10000]）"
+      speeds: "object  # 档位表（含 measured 标记与 tick 大小）"
+      default_speed: "string"
+      anchor_counts: "int"
+      budget_max: "int  # 25400"
+    note: >
+      UI 用来显示「信念示意」与背压状态（in_flight / coalesced / err）。
+
+  - path: "/camera"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      exposure_auto: "int  # 1=自动曝光(AEC on)；0=手动（用 exposure_value）"
+      exposure_value: "int  # 手动曝光值 0..1200（仅 auto=0 时生效）"
+      auto_wb: "int  # 1=自动白平衡(AWB, set_whitebal)；0=关闭"
+      auto_gain: "int  # 1=自动增益(AGC, set_gain_ctrl)；0=关闭"
+      brightness: "int  # 传感器 DSP -2..2"
+      contrast: "int  # 传感器 DSP -2..2"
+      saturation: "int  # 传感器 DSP -2..2"
+      frame_size: "int  # 分辨率枚举（0..13，OV2640 上限；本构建真值表：QVGA=6 / 480×320=9 / VGA(640×480)=10 / SVGA=11 / XGA=12 / 720p=13）；运行时切换、免重烧"
+    response:
+      ok: "bool"
+      exposure_auto: "int"
+      exposure_value: "int"
+      auto_wb: "int"
+      auto_gain: "int"
+      brightness: "int"
+      contrast: "int"
+      saturation: "int"
+      frame_size: "int"
+    note: >
+      相机传感器参数调节，**真实生效**（直接改 OV2640，整路 MJPEG 推流随之改变），
+      与「预览端 CSS filter 近似」是两回事。所有字段可选，缺省沿用上次值。
+      esp_camera_init 会把传感器重置为默认，故每次初始化后由 platform_camera.c
+      重新套用保存的参数。      预览端（ui.html / index.html）在 /camera 可用时调用本端点，
+      失败（旧固件/离线）才回退到 CSS filter 近似。
+
+  - path: "/settings"
+    method: "GET"
+    methods: ["GET", "POST"]
+    owner: "firmware"
+    auth: "public"
+    note: >
+      设备配置（BLE 名 / VID / PID / mDNS 主机 / 默认分辨率 / JPEG 质量 / WiFi 凭据 /
+      HTTP 内部 RESP_CAP·max_uri_handlers）。GET 回显当前存储值（冷生效=当前生效值），
+      POST 写入 NVS（ns qshou_cfg 存前六项、ns qshou 存 WiFi 凭据）后 esp_restart 冷生效。
+      ⚠️ WiFi 密码不回显（GET 返回空串），仅当用户填写时才更新，避免明文泄露。
+      RESP_CAP 钳制 1024..8192；max_uri_handlers 钳制 13..32（防 HTTP 服务起不来）。
+      🔴 字段名口径：GET 响应回显的是 `http_resp_cap` / `http_max_uri`，
+         POST 请求体里的键是 `http_resp_cap` / `http_max_uri`（**不是**上面 request
+         注释里的 resp_cap / max_uri —— 那是早期草稿名，从未实现）。
+      🔴 GET 回显用同一组 uint8/uint16 变量跨多次 nvs 读，**读取失败必须清零**，
+         否则后一个缺失的键会继承前一个存在键的值（曾误显 http_max_uri=cam_quality=10）。
+    request:
+      ble_name: "string  # BLE 广播名（≤31），空=不改"
+      ble_vid: "int  # HID VID（0x0000–0xFFFF，十进制），0=不改"
+      ble_pid: "int  # HID PID"
+      mdns_host: "string  # mDNS 主机名（≤31），空=不改"
+      cam_framesize: "int  # 分辨率枚举 6/9/10/11/12/13（OV2640 真值表）"
+      cam_quality: "int  # JPEG 质量 0..63（越小越清晰）"
+      wifi_ssid: "string  # WiFi SSID（写 ns qshou），空=不改"
+      wifi_pass: "string  # WiFi 密码，空=不改（不回显）"
+      http_resp_cap: "int  # HTTP 响应缓冲字节 1024..8192"
+      http_max_uri: "int  # httpd max_uri_handlers 13..32"
+    response:
+      ok: "bool"
+      ble_name: "string  # GET 回显当前值"
+      ble_vid: "int"
+      ble_pid: "int"
+      mdns_host: "string"
+      cam_framesize: "int"
+      cam_quality: "int"
+      wifi_ssid: "string"
+      wifi_pass: "string  # 恒为空串（安全：不回显密码）"
+      http_resp_cap: "int"
+      http_max_uri: "int"
+      rebooting: "bool  # POST 成功后设备即将重启冷生效"
+
+  # ==================================================================
+  # P0–P4 新增控制面（2026-10-13）。上文是「HID 交互 + 遥测」，以下是
+  # 「设备管理」。Agent/MCP 适配器主要消费这一段。
+  # ==================================================================
+
+  - path: "/schema"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "public"
+    note: >
+      **自描述端点**，Agent 只需学这一个。返回全部端点的 path/methods/desc/params，
+      以及 `auth.required`（= 编译期 g_control_auth，当前恒 false）与 `auth.scheme`。
+      🔴 本端点是 routes.c 里**手写的 JSON 字面量**，与 shared/api_schema.yaml 是
+      两份需人工同步的清单；tests/test_control_contract.py 强制二者端点集合相等。
+      改任一侧都必须改另一侧，否则守卫红。
+    response:
+      ok: "bool"
+      base: "string  # 恒 \"/api/v1\""
+      auth:
+        required: "bool  # true=控制端点需 Authorization: Bearer <token>"
+        scheme: "string  # 恒 \"Bearer\""
+      endpoints: "array  # {path, methods[], desc, params[]}"
+
+  - path: "/wifi/status"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "control"
+    response:
+      connected: "int  # 1=已关联并拿到 IP"
+      ip: "string  # 点分十进制；未连接为 \"0.0.0.0\""
+      rssi: "int  # dBm；0 = 未连接（无意义）"
+    note: "连通性自检首选。比 /health.wifi_rssi 多一个 IP，且不依赖 BLE 状态字段。"
+
+  - path: "/wifi/scan"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "control"
+    response:
+      scanning: "bool  # 恒 true（本实现是阻塞扫描，响应返回时结果已就绪）"
+      count: "int  # ap 数组长度"
+      ap: "array  # {ssid, rssi, bssid, auth}"
+    note: >
+      🔴 **阻塞 1~2 秒**（`esp_wifi_scan_start(block=true)`），会卡住 httpd 唯一任务
+      —— 调用期间**其它 HTTP 请求全部排队**（视频页会明显卡一下）。
+      只用于低频人工/Agent 规划动作，绝不可放进轮询循环。
+      `auth` 为 wifi_auth_mode_t 的整型编码（0=OPEN … 具体值见 platform_net.c
+      的 wifi_auth_to_code）。
+
+  - path: "/wifi/connect"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      ssid: "string  # 必填，空串直接 400 {\"ok\":false,\"error\":\"ssid required\"}"
+      pass: "string  # 缺省=空串（开放网络）"
+    response:
+      ok: "bool  # true=已接受并进入 connecting 状态（**不代表已连上**）"
+      state: "string  # 恒 \"connecting\""
+    note: >
+      **热切换**，不重启、不重编。实现路径：把凭据写入当前候选槽 → 若在线则先
+      `esp_wifi_disconnect()`，由 DISCONNECTED 事件回调套用新凭据重连（避开
+      `esp_wifi_set_config` 在连接中返回 ESP_ERR_WIFI_STATE）；若离线则直接连。
+      ⚠️ 回包只是「已受理」，实际结果必须轮询 `/wifi/status` 的 connected/ip。
+      ⚠️ 该凭据**只存在于本次运行的内存候选槽**，不写 NVS；要持久化请用
+      `POST /settings {"wifi_ssid","wifi_pass"}`（会重启冷生效）。
+      ⚠️ 前置条件：WiFi 已 init（开机时至少有 NVS 凭据或内置备用凭据之一），
+      否则返回 ok:false 且不会自动拉起 STA。
+
+  - path: "/wifi/disconnect"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request: {}
+    response:
+      ok: "bool"
+    note: >
+      **主动断开并保持离线**（置 stay_disconnected 标志），与「断线自动重连」区分：
+      此后即使掉线也不会自己连回去，除非再调 `/wifi/connect` 或重启。
+      两个标志（pending_switch / stay_disconnected）在成功 GOT_IP 后清零。
+
+  - path: "/ble/status"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "control"
+    response:
+      advertising: "int  # 1=当前应在广播（= 未连接 且 广播控制源 != OFF）"
+      connected: "int  # 1=BLE HID 已连接"
+      bonds: "array  # [{id, addr, type}]；id 是 forget 用的索引，addr=XX:XX:XX:XX:XX:XX"
+    note: >
+      ⚠️ `advertising` 是**驱动源语义**的投影，不是 `ble_gap_adv_is_active()` 的实测
+      （NimBLE 本版本无该 API）：NimBLE 会在连接建立/断开时自动停/启广播，所以
+      「当前没在广播」可能是「已连接」，不一定是用户关了广播。要判用户意图看
+      上一次 `/ble/advertise` 的入参。
+
+  - path: "/ble/advertise"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      "on": "bool  # 1=开（并切回 AUTO：断连后自动重启广播）；0=关（置 OFF，不自动重启）"
+    response:
+      ok: "bool"
+      advertising: "int  # 回显入参"
+    note: >
+      🔴 语义模型：`on:0` 置的是**驱动源 OFF**，不是「调一次 adv_stop」。
+      若只调 `ble_gap_adv_stop()`，下一次 DISCONNECT 事件会把广播重新拉起，
+      用户的「关闭」意图被静默覆盖（这是本端点存在的全部理由）。
+
+  - path: "/ble/disconnect"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request: {}
+    response:
+      ok: "bool  # 恒 true；未连接时是空操作（不会报错）"
+    note: >
+      主动断链（`ble_gap_terminate(conn_handle, 0x13)`），conn_handle 由 GAP CONNECT
+      事件捕获（esp_hidd 不对外暴露）。⚠️ **会清掉当前进程的 BLE 连接**，手机端
+      需重新配对/连接才能继续下发 HID。
+
+  - path: "/ble/bonds"
+    method: "GET"
+    methods: ["GET", "POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      id: "int  # 仅 POST：0-based 索引（来自 GET 的 bonds[].id）；缺省=只列举"
+    response:
+      ok: "bool"
+      bonds: "array  # [{id, addr, type}]，type ∈ public|random；最多 8 条"
+    note: >
+      GET 列举 / POST 遗忘（同一 handler 按有无 body 分流）。
+      ⚠️ 索引是**本次列举顺序**，不是稳定标识；删之前先 GET 一次。
+      遗忘的是 NimBLE bond（需重新配对），与 WiFi/NVS 无关。
+
+  - path: "/hid"
+    method: "GET"
+    methods: ["GET", "POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      mode: "string  # 仅 POST：auto|ble|usb；缺省=只读不改"
+    response:
+      ok: "bool"
+      policy: "string  # auto|ble|usb"
+      active: "string  # **下一帧**会走后端（usb|ble），纯查询不发帧"
+      last: "string  # 上一帧实际走的；一帧未发时恒为 ble，勿当 active 读"
+      would_fallback: "int  # 1 = USB 已注册但当前不可用、将回落 BLE"
+      ble: "object  # {registered, connected}"
+      usb: "object  # {registered, mounted}"
+      stats: "object  # {sent_ble, sent_usb, fallback, dropped}"
+    note: >
+      「按键没反应」的第一站观测口。排查顺序：
+      1) dropped 在涨 = 两个后端都不可用或 send 失败；
+      2) usb.mounted = 0 时 AUTO 必然回落 BLE，若 ble.connected 也是 0，
+         报文发出去没人收；
+      3) fallback / would_fallback = USB 挂着但 send 失败在回落。
+      ⚠️ active 与 last 语义不同（见 response）：一条都没发过时 last 恒为 ble，
+      哪怕 USB 早已挂载 —— 别据此判断路由选错。
+      POST 强制链路：usb_only 下 USB 未挂载时**不回落**（宁可丢帧也不悄悄换链路），
+      诊断完记得调回 auto。
+
+  - path: "/hid/mouse"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      buttons: "int  # 0..255 位掩码，bit0=left bit1=right bit2=middle"
+      dx: "int  # 相对位移，钳到 int8 → **±127**"
+      dy: "int  # 同上"
+    response:
+      ok: "bool  # = platform_ble_emit_report 是否成功（未连接/队列满 → false）"
+    note: >
+      直发 report ID 1，**绕过手势队列与全部校验**，故 ±127 上限由自己负责；
+      需要固件按预算自适应展开位移请用 `/gesture`（dir），别在这里自己循环发。
+      🔴 这是最低层通道：调用方要自己做按下/抬起配对，否则会卡在按下态。
+
+  - path: "/hid/keyboard"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      modifier: "int  # 0..255 位掩码（Ctrl/Shift/Alt/GUI…）"
+      keys: "int[6]  # 最多 6 个同时按下的 HID usage；不足补 0"
+    response:
+      ok: "bool"
+    note: >
+      直发 report ID 2，线帧 = `[modifier, 0, k0..k5]`（8 字节）。
+      ⚠️ 与 `/key`（走队列、支持键名映射）二选一，别混用：直发不排队，
+      会在手势回放中途插进去。用完记得再发一次全 0 松开帧。
+
+  - path: "/hid/consumer"
+    method: "POST"
+    methods: ["POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      usage_lo: "int  # 16-bit Consumer usage 低字节，如音量 0xE9 / 播放 0xCD"
+      usage_hi: "int  # 高字节"
+    response:
+      ok: "bool"
+    note: "直发 report ID 3，2 字节。同样不走队列、不做键名映射。"
+
+  - path: "/gpio"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "control"
+    response:
+      ok: "bool"
+      pins: "array  # [{pin, mode, value}]；mode ∈ in|out|pwm"
+    note: >
+      列出**当前可管理**的引脚，恒 5 个：19/21/22/23/25。
+      🔴 这不是「用户想要的白名单」，而是复核后的**安全集**：
+      26–37 被 Octal PSRAM/MSPI 硬连线占用（`soc/spi_pins.h`：CS1=26 HD=27 WP=28
+      CS0=29 CLK=30 MISO=31 MOSI=32 D4=33 D5=34 D6=35 D7=36 DQS=37，
+      `CONFIG_SPIRAM_MODE_OCT=y`），4/5/16/17/18 被 OV2640 占用。
+      ⚠️ gpio_config() 只改 pad 级 IOMUX，写这些脚**会返回成功**，
+      但会把脚从 PSRAM/相机总线上摘掉 → 事后随机崩溃或数据损坏。
+      绝不能靠运行时试探发现，只能查这两个真源。
+
+  - path: "/gpio/{pin}"
+    method: "GET"
+    methods: ["GET", "POST"]
+    owner: "firmware"
+    auth: "control"
+    request:
+      mode: "string  # in|out|pwm；缺省=不改模式"
+      value: "int  # out 时 0/1；pwm 时为占空比 0..255（=duty）"
+    response:
+      ok: "bool"
+      pin: "int"
+      mode: "string  # 回显当前模式"
+      value: "int  # 回显当前值"
+    note: >
+      🔴 **注册形态**：本端点在 httpd 里注册为通配 `/api/v1/gpio/*`
+      （依赖 `cfg.uri_match_fn = httpd_uri_match_wildcard`；不设它则默认
+      `httpd_uri_match_simple` 纯精确比较，所有带引脚号的请求 404，且 404 文案是
+      esp_http_server 的 "Nothing matches the same URI"，极易误判成网络/烧写问题）。
+      调用顺序：**先 mode 后 value**（未设 mode 就写值只会按 out 写）。
+      非法/越权引脚 → 400 {"ok":false,"error":"..."}；mode 非 in/out/pwm → 400。
+      读写均**同步返回当前值**，无需再 GET 一次。
+
+  - path: "/events"
+    method: "GET"
+    methods: ["GET"]
+    owner: "firmware"
+    auth: "control"
+    transport: "websocket"
+    response:
+      ok: "bool"
+      transport: "string  # 恒 \"websocket\""
+      subscribers: "int  # 当前订阅连接数，上限 4（max_open_sockets=7 已占 3）"
+      hint: "string"
+    note: >
+      **双向事件通道**（P4）。同一 URI 有两种用法：
+      (a) 普通 GET（不带 Upgrade）→ 只回上面的状态 JSON，用于可达性自检；
+      (b) 带 `Upgrade: websocket` 握手 → 升级为 WS，文本帧双向。
+      🔴 🔴 三条踩过两次烧写才搞明白的时序铁律（照抄，别「优化」）：
+        1. **设备不会在握手后主动推帧**。httpd 只在收到客户端帧时才回调 ws_handler，
+           所以「握手即订阅」不成立 → 客户端**必须先发一帧**，设备才回一条
+           `{"type":"status","echo":...,"ip":...,"rssi":...,"ble_connected":...,"subscribers":N}`
+           作为握手确认兼心跳。
+        2. 收到任意文本都回同一形状的 status（echo 你的内容），无请求-响应语义，
+           别指望它做 RPC。
+        3. 该 URI **不在 ROUTES[] 里**，用 HTTP_GET + is_websocket=true 单独注册；
+           放进通用 HTTP_ANY 桥接会让握手永远不被处理。
+      🔴 服务端主动推送只经 `platform_events_broadcast(json)`（非阻塞，mbox 满即丢，
+      不阻塞相机/BLE/HTTP）；订阅上限 4，超额握手后首个帧会失败。
+      ⚠️ 订阅存续期间普通 HTTP 仍可用（已真机验证），但 httpd 只有单任务，
+      `/wifi/scan` 之类阻塞端点仍会拖累全站。
+
+
+speed_tiers:
+  note: >
+    实测依据：2026-10-02 指针增益标定（docs/evidence/2026-10-02_pointer_gain.md）。
+    step_ms 越小 → 同样 counts 走得更远（指针加速度），实测 90→15 增益 +52%。
+    两轴也不同（同速 X 比 Y 高 18%），故档位必须与安装绑定。
+  tiers:
+    fine:   {step_ms: 90, tick: 200, measured: true}
+    normal: {step_ms: 60, tick: 450, measured: false, warn: "未实测，插值占位"}
+    fast:   {step_ms: 15, tick: 900, measured: true}
+  tick: "摇杆单次 tick / 方向键单击一步的默认位移（HID count）"

@@ -1,0 +1,76 @@
+{
+  "uc_id": "UC2",
+  "name": "打开指定 App",
+  "covers": "CAP→SCR→HID 全链路 + 图标定位精度",
+  "started_at": 1790815660.716308,
+  "ended_at": 1790815660.716308,
+  "duration_s": 0.0,
+  "passed": true,
+  "checks": [
+    {
+      "name": "device 接受 tap_app_icon",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "单应映射为单射",
+      "ok": true,
+      "detail": "(925.9259259259259, 416.66666666666663) vs (8333.333333333334, 8333.333333333334)"
+    },
+    {
+      "name": "SCR→HID y 单调",
+      "ok": true,
+      "detail": "y(100)=416.7 y(2300)=9583.3"
+    },
+    {
+      "name": "标定残差 ≤ 3px",
+      "ok": true,
+      "detail": "residual=n/a"
+    },
+    {
+      "name": "report 坐标在 [0,10000]",
+      "ok": true,
+      "detail": "(5000,2500)"
+    }
+  ],
+  "checks_passed": 5,
+  "checks_total": 5,
+  "note": "",
+  "steps": [
+    {
+      "label": "key:HOME",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/key",
+        "echo": {
+          "key": "HOME"
+        }
+      }
+    },
+    {
+      "label": "tap_app_icon",
+      "response": {
+        "ok": true,
+        "endpoint": "/api/v1/tap",
+        "echo": {
+          "x": 540,
+          "y": 600,
+          "hid_report": [
+            3,
+            19,
+            136,
+            9,
+            196
+          ],
+          "hid_x": 5000,
+          "hid_y": 2500
+        }
+      },
+      "hid": [
+        5000,
+        2500
+      ],
+      "report": "03138809c4"
+    }
+  ]
+}
